@@ -2,10 +2,13 @@ import { METRICS_NAMESPACE, SERVICE_NAME, type TargetEnv } from '@oracle-seminol
 import * as cdk from 'aws-cdk-lib';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import type * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
 import { ObservableFunction } from './constructs/observable-function';
+
+export const NLQ_MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 /**
  * Shared API domains, keyed by AWS account, per the `build-frontend-backends`
@@ -53,11 +56,22 @@ export class ApiStack extends cdk.Stack {
       environment: {
         TABLE_NAME: props.table.tableName,
         DATA_BUCKET_NAME: props.dataBucket.bucketName,
+        NLQ_MODEL_ID,
       },
     });
 
     props.table.grantReadWriteData(trpcHandler);
     props.dataBucket.grantRead(trpcHandler);
+
+    trpcHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:*::foundation-model/${NLQ_MODEL_ID.replace(/^us\./, '')}`,
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${NLQ_MODEL_ID}`,
+        ],
+      }),
+    );
 
     this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
       apiName: `${SERVICE_NAME}-${props.targetEnv}-api`,

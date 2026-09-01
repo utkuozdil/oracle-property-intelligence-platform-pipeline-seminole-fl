@@ -70,7 +70,11 @@ const leadsInput = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   radiusMiles: z.number().positive().max(100).describe('Search radius around the pin.'),
-  minRoofAge: z.number().int().optional().describe('Default 15.'),
+  minRoofAge: z
+    .number()
+    .int()
+    .optional()
+    .describe('Optional roof-age floor. Omit for the open-permit question; it does not require an aged roof.'),
   minPermitOpenYears: z
     .number()
     .optional()
@@ -100,9 +104,9 @@ export const TOOLS: ToolDefinition[] = [
     title: 'Describe the published Seminole County dataset',
     description:
       'What is published, how fresh it is, which IPFS CID is being read, and what is NOT in it. ' +
-      'Call this first: it states up front that permit history and BBB ratings are absent unless ' +
-      'this server was configured with access to them, so an empty permit result is never ' +
-      'mistaken for "no permits".',
+      'Call this first: it states up front that permit history and BBB ratings are absent from ' +
+      'the IPFS query table unless this server was pointed at the published S3 permit snapshot, ' +
+      'so an empty permit result is never mistaken for "no permits".',
     schema: describeInput,
     run: (dataset) => dataset.describeDataset(),
   },
@@ -151,18 +155,19 @@ export const TOOLS: ToolDefinition[] = [
     name: 'find_roofing_leads',
     title: 'Roofing leads near a point, with permit and contractor evidence',
     description:
-      'Answers the composite question: which properties near this area have roofing permits that ' +
-      'have stayed open for years, and who is the listed contractor (with a BBB rating where one ' +
-      'exists). Permit and BBB data are NOT part of the published open dataset; when this server ' +
-      'has no access to them the response says the permit half of the question is unanswered and ' +
-      'returns aged-roof candidates instead of an empty list.',
+      'Answers the composite question: which properties near this area have confirmed-open ' +
+      'roofing permits that have stayed open for years, and who is the listed contractor (with a ' +
+      'BBB rating where the snapshot has one). Status "unknown" is not treated as open. Permit ' +
+      'and BBB columns are NOT in the IPFS query table; when this server has no snapshot pointer ' +
+      'the response says the permit half is unanswered and returns aged-roof candidates instead ' +
+      'of an empty list.',
     schema: leadsInput,
     run: (dataset, input) =>
       dataset.findRoofingLeads({
         latitude: Number(input.latitude),
         longitude: Number(input.longitude),
         radiusMiles: Number(input.radiusMiles),
-        minRoofAge: (input.minRoofAge as number | undefined) ?? 15,
+        minRoofAge: input.minRoofAge as number | undefined,
         minPermitOpenYears: (input.minPermitOpenYears as number | undefined) ?? 3,
         limit: input.limit as number | undefined,
       }),

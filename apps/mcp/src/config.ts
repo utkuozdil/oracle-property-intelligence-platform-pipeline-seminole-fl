@@ -8,10 +8,10 @@ import { join } from 'node:path';
  * credentials, no database and no deployed endpoint to answer its core tools, which is
  * the whole reason it can be handed to an outside agent as a package rather than a URL.
  *
- * The two enrichment sources — permit status sweeps and BBB contractor ratings — are the
- * exception. They live in the pipeline's private S3 bucket and are *not* part of the
- * published IPFS dataset, so they are opt-in, off by default, and their absence is
- * reported in tool output rather than silently flattened into an empty result.
+ * Permit history and BBB ratings live in the published S3 permit snapshot
+ * (`publish/permits/current.json`), not in the IPFS query table. They are opt-in, off
+ * unless `ORACLE_DATA_BUCKET` or `ORACLE_PERMIT_POINTER_URI` is set, and their absence
+ * is reported rather than flattened into an empty result.
  */
 
 /** The published Seminole County IPNS name. Stable across re-publishes. */
@@ -33,21 +33,10 @@ export const MANIFEST_PATH = 'query-table/manifest.json';
 
 export interface EnrichmentConfig {
   /**
-   * DuckDB-readable location of permit status rows (NDJSON, one record per permit
-   * application). Globs are allowed, e.g.
-   * `s3://<bucket>/staged/permits/status/run=roof-hunt-r1/batch-*.ndjson`.
-   *
-   * There is no `current.json` pointer for permit sweeps, and the sweeps are still
-   * running, so this is never guessed — an operator names the exact prefix they trust.
+   * The published permit pointer (`publish/permits/current.json`) or a direct
+   * `permits.parquet`. Same snapshot the API and Radius search read.
    */
-  permitStatusUri: string | null;
-  /**
-   * The BBB contractor-ratings pointer object (`staged/bbb/contractor-ratings/current.json`).
-   *
-   * The pointer, not the run prefix: globbing the prefix picks up superseded, smaller
-   * runs alongside the current one and silently halves the match count.
-   */
-  bbbPointerUri: string | null;
+  permitPointerUri: string | null;
 }
 
 export interface ServerConfig {
@@ -70,9 +59,14 @@ function ipnsUrl(gateway: string, ipnsName: string, path: string): string {
   return `${gateway.replace(/\/+$/, '')}/ipns/${ipnsName}/${path}`;
 }
 
-function optional(name: string): string | null {
-  const value = process.env[name]?.trim();
+function optional(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const value = env[name]?.trim();
   return value === undefined || value === '' ? null : value;
+}
+
+function permitPointerFromBucket(bucket: string | null): string | null {
+  if (bucket === null) return null;
+  return `s3://${bucket}/publish/permits/current.json`;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -103,8 +97,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     cacheDir,
     duckdbBin: env.DUCKDB_BIN?.trim() || 'duckdb',
     enrichment: {
-      permitStatusUri: optional('ORACLE_PERMIT_STATUS_URI'),
-      bbbPointerUri: optional('ORACLE_BBB_POINTER_URI'),
+      permitPointerUri:
+        optional('ORACLE_PERMIT_POINTER_URI', env) ??
+        optional('ORACLE_PERMIT_STATUS_URI', env) ??
+        permitPointerFromBucket(optional('ORACLE_DATA_BUCKET', env)),
     },
     maxLimit: Number(env.ORACLE_MCP_MAX_LIMIT ?? 200),
   };

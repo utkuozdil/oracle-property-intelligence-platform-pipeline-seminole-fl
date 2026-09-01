@@ -1,18 +1,23 @@
-import { useEffect, useState } from 'react';
-import type { api } from './api';
+import { useEffect, useRef, useState } from 'react';
+import { api } from './api';
 import {
   MISSING,
   formatCoordinate,
   formatCount,
   formatCurrency,
+  formatBbb,
   formatMiles,
   formatNumber,
   formatYear,
+  formatYearsOpen,
 } from './format';
 import {
   EMPTY_RADIUS,
   NEARBY_SORT_OPTIONS,
+  MAX_RADIUS_MILES,
   RADIUS_MILE_PRESETS,
+  clampRadiusMiles,
+  hasRadiusCentre,
   type NearbySortKey,
   type RadiusQuery,
 } from './query';
@@ -53,10 +58,24 @@ export function RadiusSearchView({
   onOpenOwner,
 }: RadiusSearchViewProps) {
   const [draft, setDraft] = useState<RadiusQuery>(applied);
+  const [missingCentre, setMissingCentre] = useState(false);
+  const nearRef = useRef<HTMLInputElement>(null);
   useEffect(() => setDraft(applied), [applied]);
 
   const set = <K extends keyof RadiusQuery>(key: K, value: RadiusQuery[K]): void => {
+    setMissingCentre(false);
     setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const submit = (): void => {
+    const next = { ...draft, radiusMiles: clampRadiusMiles(draft.radiusMiles), page: 1 };
+    if (!hasRadiusCentre(next)) {
+      setMissingCentre(true);
+      nearRef.current?.focus();
+      return;
+    }
+    setMissingCentre(false);
+    onApply(next);
   };
 
   return (
@@ -76,7 +95,7 @@ export function RadiusSearchView({
         aria-label="Radius search"
         onSubmit={(event) => {
           event.preventDefault();
-          onApply({ ...draft, page: 1 });
+          submit();
         }}
       >
         <div className="filter-grid">
@@ -84,10 +103,12 @@ export function RadiusSearchView({
             <label htmlFor="radius-near">Centre — address, parcel ID, jurisdiction, or owner</label>
             <input
               id="radius-near"
+              ref={nearRef}
               data-testid="radius-near-input"
               type="search"
               placeholder="e.g. Sanford, 629 EDEN PARK RD, or 1721295BG0000072A"
               value={draft.near}
+              aria-invalid={missingCentre}
               onChange={(event) => set('near', event.target.value)}
             />
           </div>
@@ -125,11 +146,15 @@ export function RadiusSearchView({
               data-testid="radius-miles-input"
               type="number"
               min={0.05}
-              max={50}
+              max={MAX_RADIUS_MILES}
               step="any"
               value={draft.radiusMiles}
               onChange={(event) => set('radiusMiles', event.target.value)}
+              onBlur={() => set('radiusMiles', clampRadiusMiles(draft.radiusMiles))}
             />
+            <p className="cell-sub">
+              1–{MAX_RADIUS_MILES} miles. {MAX_RADIUS_MILES} covers the whole county.
+            </p>
             <div className="preset-row">
               {RADIUS_MILE_PRESETS.map((miles) => (
                 <button
@@ -137,7 +162,16 @@ export function RadiusSearchView({
                   type="button"
                   className="button button--chip"
                   data-testid={`radius-miles-${String(miles).replace('.', '-')}`}
-                  onClick={() => onApply({ ...draft, radiusMiles: String(miles), page: 1 })}
+                  onClick={() => {
+                    const next = { ...draft, radiusMiles: String(miles), page: 1 };
+                    if (!hasRadiusCentre(next)) {
+                      setMissingCentre(true);
+                      nearRef.current?.focus();
+                      return;
+                    }
+                    setMissingCentre(false);
+                    onApply(next);
+                  }}
                 >
                   {miles} mi
                 </button>
@@ -190,6 +224,39 @@ export function RadiusSearchView({
               <option value="false">In area only</option>
             </select>
           </div>
+
+          <div className="filter">
+            <label htmlFor="radius-open-roofing">Roofing permits</label>
+            <select
+              id="radius-open-roofing"
+              data-testid="radius-open-roofing"
+              value={draft.openRoofing}
+              onChange={(event) => {
+                const openRoofing = event.target.value as RadiusQuery['openRoofing'];
+                setDraft((current) => ({
+                  ...current,
+                  openRoofing,
+                  sort: openRoofing === 'true' ? 'permit_open_desc' : current.sort,
+                }));
+              }}
+            >
+              <option value="">Any — do not filter on permits</option>
+              <option value="true">Open roofing only</option>
+            </select>
+          </div>
+
+          <div className="filter">
+            <label htmlFor="radius-min-open-years">Open at least (years)</label>
+            <input
+              id="radius-min-open-years"
+              data-testid="radius-min-open-years"
+              type="number"
+              min={0}
+              placeholder="Any"
+              value={draft.minOpenRoofingYears}
+              onChange={(event) => set('minOpenRoofingYears', event.target.value)}
+            />
+          </div>
         </div>
 
         <div className="filter-actions">
@@ -199,7 +266,7 @@ export function RadiusSearchView({
             data-testid="radius-submit"
             onClick={(event) => {
               event.preventDefault();
-              onApply({ ...draft, page: 1 });
+              submit();
             }}
           >
             Search this radius
@@ -212,14 +279,45 @@ export function RadiusSearchView({
           >
             Reset
           </button>
+          <button
+            className="button button--chip"
+            type="button"
+            data-testid="radius-open-roofing-demo"
+            onClick={() => {
+              const next = {
+                ...draft,
+                radiusMiles: clampRadiusMiles(draft.radiusMiles),
+                openRoofing: 'true' as const,
+                minOpenRoofingYears: '3',
+                sort: 'permit_open_desc' as NearbySortKey,
+                page: 1,
+              };
+              if (!hasRadiusCentre(next)) {
+                setMissingCentre(true);
+                nearRef.current?.focus();
+                return;
+              }
+              setMissingCentre(false);
+              onApply(next);
+            }}
+          >
+            Open roofing, longest first
+          </button>
         </div>
 
         <p className="footnote">
-          Coordinates win over text when both are filled, so a pin drop is never overridden.
-          Distance is exact haversine; a latitude/longitude bounding box sized to the radius decides
-          which parcels get a distance computed at all.
+          Type a city or address in Centre. Latitude and longitude are optional — use them only
+          for a GPS pin, and leave Centre empty if you do. Open roofing uses confirmed status
+          only; unknown is unharvested, not closed.
         </p>
       </form>
+
+      {missingCentre && (
+        <p className="notice notice--error" data-testid="radius-missing-centre" role="status">
+          Type a city or address in Centre — for example Sanford — or enter latitude and
+          longitude, then search.
+        </p>
+      )}
 
       <RadiusResults
         state={state}
@@ -246,7 +344,11 @@ function RadiusResults({
   onOpenOwner: (owner: string) => void;
 }) {
   if (state.status === 'idle') {
-    return null;
+    return (
+      <p className="notice" data-testid="radius-idle">
+        Type a city or address in Centre — for example Sanford — then search.
+      </p>
+    );
   }
 
   if (state.status === 'loading') {
@@ -328,6 +430,14 @@ function RadiusResults({
             Roof age ≥ {applied.roofAgeMin} yrs
           </span>
         )}
+        {applied.openRoofing === 'true' && (
+          <span className="chip" data-testid="radius-chip-open-roofing">
+            Open roofing
+            {applied.minOpenRoofingYears !== ''
+              ? ` ≥ ${applied.minOpenRoofingYears} yr`
+              : ''}
+          </span>
+        )}
       </div>
 
       {result.total === 0 ? (
@@ -350,6 +460,9 @@ function RadiusResults({
                   <th scope="col">Jurisdiction</th>
                   <th scope="col">Year built</th>
                   <th scope="col">Roof age</th>
+                  <th scope="col">Open years</th>
+                  <th scope="col">Contractor</th>
+                  <th scope="col">BBB</th>
                   <th scope="col">Just value</th>
                   <th scope="col">Coordinates</th>
                 </tr>
@@ -390,6 +503,15 @@ function RadiusResults({
                     <td className="num">{formatYear(row.yearBuilt)}</td>
                     <td className="num" data-testid="radius-cell-roof-age">
                       {formatNumber(row.roofAge)}
+                    </td>
+                    <td className="num" data-testid="radius-cell-open-years">
+                      {formatYearsOpen(row.openRoofing?.maxOpenYears)}
+                    </td>
+                    <td data-testid="radius-cell-contractor">
+                      {row.openRoofing?.contractorName ?? MISSING}
+                    </td>
+                    <td data-testid="radius-cell-bbb">
+                      {formatBbb(row.openRoofing?.bbbRating, row.openRoofing?.bbbLookup)}
                     </td>
                     <td className="num">{formatCurrency(row.totalJustValue)}</td>
                     <td className="num mono" data-testid="radius-cell-coordinates">
@@ -435,6 +557,20 @@ function RadiusResults({
           ? 'Every parcel in this snapshot carries a centroid.'
           : `${formatCount(result.withoutCoordinates)} parcels carry no centroid and cannot appear in any radius.`}
       </p>
+      {result.permits.available ? (
+        <p className="footnote" data-testid="radius-permit-coverage">
+          {result.permits.coverage.statusNote} Open years, contractor, and BBB come from permit
+          snapshot <code>{result.permits.coverage.runId}</code>
+          {result.permits.coverage.referenceDate
+            ? `, observed ${result.permits.coverage.referenceDate.slice(0, 10)}`
+            : ''}
+          .
+        </p>
+      ) : (
+        <p className="footnote" data-testid="radius-permit-missing">
+          Permit history is not loaded in this container, so open-roofing columns are empty.
+        </p>
+      )}
     </section>
   );
 }

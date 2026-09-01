@@ -10,8 +10,7 @@ describe('loadConfig', () => {
     // The trap that already cost a day: the dataset CID is a directory, and DuckDB
     // reports a directory as "No magic bytes found". The path must reach the file.
     expect(config.parquetSource).toBe(`https://ipfs.io/ipns/${IPNS}/query-table/seminole.parquet`);
-    expect(config.enrichment.permitStatusUri).toBeNull();
-    expect(config.enrichment.bbbPointerUri).toBeNull();
+    expect(config.enrichment.permitPointerUri).toBeNull();
   });
 
   it('resolves through IPNS rather than a pinned CID, so a re-publish needs no change here', () => {
@@ -37,7 +36,22 @@ describe('loadConfig', () => {
 
   it('treats an empty enrichment variable as unset rather than as an empty path', () => {
     const config = loadConfig({ ORACLE_PERMIT_STATUS_URI: '  ' });
-    expect(config.enrichment.permitStatusUri).toBeNull();
+    expect(config.enrichment.permitPointerUri).toBeNull();
+  });
+
+  it('derives the published permit pointer from the data bucket', () => {
+    const config = loadConfig({ ORACLE_DATA_BUCKET: 'oracleseminole-dev-core' });
+    expect(config.enrichment.permitPointerUri).toBe(
+      's3://oracleseminole-dev-core/publish/permits/current.json',
+    );
+  });
+
+  it('prefers an explicit permit pointer over the bucket default', () => {
+    const config = loadConfig({
+      ORACLE_DATA_BUCKET: 'oracleseminole-dev-core',
+      ORACLE_PERMIT_POINTER_URI: '/tmp/permits.parquet',
+    });
+    expect(config.enrichment.permitPointerUri).toBe('/tmp/permits.parquet');
   });
 
   it('can turn the cache off', () => {

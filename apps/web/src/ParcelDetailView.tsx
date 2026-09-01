@@ -2,20 +2,23 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import {
   MISSING,
+  formatBbb,
   formatBoolean,
   formatCoordinate,
   formatCurrency,
   formatDate,
   formatNumber,
   formatYear,
+  formatYearsOpen,
 } from './format';
 
 type DetailResponse = Awaited<ReturnType<typeof api.parcels.detail.query>>;
 export type ParcelDetail = NonNullable<DetailResponse['parcel']>;
+type ParcelPermits = DetailResponse['permits'];
 
 type State =
   | { status: 'loading' }
-  | { status: 'ready'; parcel: ParcelDetail }
+  | { status: 'ready'; parcel: ParcelDetail; permits: ParcelPermits }
   | { status: 'missing' }
   | { status: 'error'; message: string };
 
@@ -65,7 +68,7 @@ export function ParcelDetailView({
         setState(
           response.parcel === null
             ? { status: 'missing' }
-            : { status: 'ready', parcel: response.parcel },
+            : { status: 'ready', parcel: response.parcel, permits: response.permits },
         );
       })
       .catch((error: unknown) => {
@@ -112,6 +115,7 @@ export function ParcelDetailView({
       {state.status === 'ready' && (
         <ParcelDetailBody
           parcel={state.parcel}
+          permits={state.permits}
           onOpenOwner={onOpenOwner}
           onOpenRadius={onOpenRadius}
         />
@@ -122,10 +126,12 @@ export function ParcelDetailView({
 
 function ParcelDetailBody({
   parcel,
+  permits,
   onOpenOwner,
   onOpenRadius,
 }: {
   parcel: ParcelDetail;
+  permits: ParcelPermits;
   onOpenOwner: (owner: string) => void;
   onOpenRadius: (near: string, radiusMiles?: string, roofAgeMin?: string) => void;
 }) {
@@ -382,6 +388,82 @@ function ParcelDetailBody({
                 Roofs over 15 years within 1 mile
               </button>
             </div>
+          )}
+        </article>
+
+        <article className="panel panel--wide" data-testid="detail-permits">
+          <h2>Roofing permits</h2>
+          {!permits.available ? (
+            <p className="footnote">Permit history is not loaded for this snapshot.</p>
+          ) : (
+            <>
+              <dl>
+                <Field
+                  label="Permits on record (1996–2026 census)"
+                  value={
+                    permits.summary === null
+                      ? 'None in the harvested window'
+                      : String(permits.summary.permitCount)
+                  }
+                  testId="detail-permit-count"
+                />
+                <Field
+                  label="Confirmed-open roofing"
+                  value={
+                    permits.summary === null
+                      ? '0'
+                      : String(permits.summary.openRoofingCount)
+                  }
+                  testId="detail-open-roofing-count"
+                />
+                <Field
+                  label="Unknown status (unharvested, not closed)"
+                  value={
+                    permits.summary === null
+                      ? MISSING
+                      : String(permits.summary.unknownStatusCount)
+                  }
+                  testId="detail-unknown-status-count"
+                />
+              </dl>
+              {permits.openRoofing.length === 0 ? (
+                <p className="footnote" data-testid="detail-no-open-roofing">
+                  No confirmed-open roofing permit on this parcel. {permits.coverage.statusNote}
+                </p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="table" data-testid="detail-open-roofing-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Application</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Open years</th>
+                        <th scope="col">Contractor</th>
+                        <th scope="col">BBB</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {permits.openRoofing.map((permit) => (
+                        <tr key={`${permit.applicationNo ?? permit.permitType}-${permit.issuedOn}`}>
+                          <td className="mono">{permit.applicationNo ?? MISSING}</td>
+                          <td>{permit.permitType ?? MISSING}</td>
+                          <td className="num">{formatYearsOpen(permit.openYears)}</td>
+                          <td>{permit.contractorName ?? MISSING}</td>
+                          <td>{formatBbb(permit.bbbRating, permit.bbbLookup)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="footnote" data-testid="detail-permit-source">
+                {permits.coverage.statusNote} Snapshot <code>{permits.coverage.runId}</code>
+                {permits.coverage.referenceDate
+                  ? `, observed ${permits.coverage.referenceDate.slice(0, 10)}`
+                  : ''}
+                .
+              </p>
+            </>
           )}
         </article>
       </div>

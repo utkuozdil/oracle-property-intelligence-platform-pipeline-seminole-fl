@@ -1,4 +1,5 @@
 import { router } from '../trpc';
+import { agentRouter } from './agent';
 import { entitiesRouter } from './entities';
 import { parcelsRouter } from './parcels';
 import { runsRouter } from './runs';
@@ -9,6 +10,7 @@ export const appRouter = router({
   runs: runsRouter,
   parcels: parcelsRouter,
   entities: entitiesRouter,
+  agent: agentRouter,
 });
 
 export type AppRouter = typeof appRouter;

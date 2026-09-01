@@ -75,6 +75,19 @@ export function formatSigned(value: number | null | undefined): string {
   return `${value > 0 ? '+' : '−'}${decimal.format(Math.abs(value))}`;
 }
 
+export function formatYearsOpen(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return MISSING;
+  return `${value.toFixed(1)} yr`;
+}
+
+export function formatBbb(rating: string | null | undefined, lookup?: string | null): string {
+  if (rating !== null && rating !== undefined && rating !== '') return `BBB ${rating}`;
+  if (lookup === 'searched_no_match') return 'No BBB profile';
+  if (lookup === 'matched_unrated') return 'BBB profile, no grade';
+  if (lookup === 'not_searched') return 'BBB not searched';
+  return MISSING;
+}
+
 export function formatMiles(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return MISSING;
   if (value < 0.1) return `${(value * 5280).toFixed(0)} ft`;

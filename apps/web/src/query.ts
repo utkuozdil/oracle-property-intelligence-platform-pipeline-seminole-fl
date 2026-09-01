@@ -25,6 +25,7 @@ export interface SearchQuery {
 export const SORT_OPTIONS = [
   { value: 'relevance', label: 'Parcel order' },
   { value: 'roof_age_desc', label: 'Roof age — oldest first' },
+  { value: 'roof_age_asc', label: 'Roof age — newest first' },
   { value: 'total_just_value_desc', label: 'Just value — highest first' },
   { value: 'total_just_value_asc', label: 'Just value — lowest first' },
   { value: 'years_since_sale_desc', label: 'Years since sale — longest first' },
@@ -68,6 +69,9 @@ export interface RadiusQuery {
   roofAgeMin: string;
   jurisdiction: string;
   ownerOutOfArea: '' | 'true' | 'false';
+  /** Confirmed-open roofing only. Empty means no permit filter. */
+  openRoofing: '' | 'true';
+  minOpenRoofingYears: string;
   sort: NearbySortKey;
   page: number;
   pageSize: number;
@@ -75,6 +79,7 @@ export interface RadiusQuery {
 
 export const NEARBY_SORT_OPTIONS = [
   { value: 'distance_asc', label: 'Distance — nearest first' },
+  { value: 'permit_open_desc', label: 'Open roofing permit — longest first' },
   ...SORT_OPTIONS,
 ] as const;
 
@@ -84,6 +89,16 @@ const NEARBY_SORT_VALUES = NEARBY_SORT_OPTIONS.map((option) => option.value) as 
 
 export const RADIUS_MILE_PRESETS = [0.5, 1, 3, 5, 10] as const;
 
+/** Matches the API cap. Fifty miles covers Seminole County from any point inside it. */
+export const MAX_RADIUS_MILES = 50;
+
+export function clampRadiusMiles(raw: string): string {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return EMPTY_RADIUS.radiusMiles;
+  if (parsed > MAX_RADIUS_MILES) return String(MAX_RADIUS_MILES);
+  return String(parsed);
+}
+
 export const EMPTY_RADIUS: RadiusQuery = {
   near: '',
   lat: '',
@@ -92,13 +107,15 @@ export const EMPTY_RADIUS: RadiusQuery = {
   roofAgeMin: '',
   jurisdiction: '',
   ownerOutOfArea: '',
+  openRoofing: '',
+  minOpenRoofingYears: '',
   sort: 'distance_asc',
   page: 1,
   pageSize: 25,
 };
 
-/** The four top-level views. `parcel` and `owner` open on top of whichever view is active. */
-export const VIEWS = ['search', 'radius', 'runs', 'owners'] as const;
+/** Top-level views. `parcel` and `owner` open on top of whichever view is active. */
+export const VIEWS = ['search', 'radius', 'agent', 'runs', 'owners'] as const;
 export type ViewName = (typeof VIEWS)[number];
 
 export interface AppState {
@@ -146,10 +163,12 @@ export function parseLocation(search: string): AppState {
       near: text('near'),
       lat: text('lat'),
       lon: text('lon'),
-      radiusMiles: params.get('radius') ?? EMPTY_RADIUS.radiusMiles,
+      radiusMiles: clampRadiusMiles(params.get('radius') ?? EMPTY_RADIUS.radiusMiles),
       roofAgeMin: text('radiusRoofAgeMin'),
       jurisdiction: text('radiusJurisdiction'),
       ownerOutOfArea: radiusFlag === 'true' || radiusFlag === 'false' ? radiusFlag : '',
+      openRoofing: params.get('radiusOpenRoofing') === 'true' ? 'true' : '',
+      minOpenRoofingYears: text('radiusMinOpenYears'),
       sort: readNearbySort(params.get('radiusSort')),
       page: readInt(params.get('radiusPage'), 1),
       pageSize: readInt(params.get('radiusPageSize'), 25),
@@ -185,6 +204,8 @@ export function toSearchString(state: AppState): string {
       ['radiusRoofAgeMin', radius.roofAgeMin],
       ['radiusJurisdiction', radius.jurisdiction],
       ['radiusOwnerOutOfArea', radius.ownerOutOfArea],
+      ['radiusOpenRoofing', radius.openRoofing],
+      ['radiusMinOpenYears', radius.minOpenRoofingYears],
     ] as const) {
       if (value !== '') params.set(key, value);
     }
@@ -276,32 +297,65 @@ export interface NearbyInput {
   roofAgeMin?: number;
   jurisdiction?: string;
   ownerOutOfArea?: boolean;
+  openRoofingOnly?: boolean;
+  minOpenRoofingYears?: number;
   sort: NearbySortKey;
   page: number;
   pageSize: number;
 }
 
+/** True when the form has a place name or a complete lat/lon pair. */
+export function hasRadiusCentre(radius: RadiusQuery): boolean {
+  if (radius.near.trim() !== '') return true;
+  return toOptionalNumber(radius.lat) !== undefined && toOptionalNumber(radius.lon) !== undefined;
+}
+
 /**
- * Explicit coordinates win over free text, so a pin drop is never overridden by whatever
- * text happens to be left in the box. Returns `null` when neither is set, which is the
- * "nothing to search yet" state rather than an error.
+ * The centre box wins when it has text, so typing Sanford is never ignored because
+ * leftover coordinates are still in the GPS fields. Coordinates are used only when
+ * the box is empty. Returns `null` when neither is set.
  */
 export function toNearbyInput(radius: RadiusQuery): NearbyInput | null {
   const lat = toOptionalNumber(radius.lat);
   const lon = toOptionalNumber(radius.lon);
   const near = radius.near.trim();
   const hasPoint = lat !== undefined && lon !== undefined;
-  if (!hasPoint && near === '') return null;
+  if (near === '' && !hasPoint) return null;
 
   return {
-    ...(hasPoint ? { lat, lon } : { near }),
-    radiusMiles: toOptionalNumber(radius.radiusMiles) ?? 5,
+    ...(near !== '' ? { near } : { lat, lon }),
+    radiusMiles: Number(clampRadiusMiles(radius.radiusMiles)),
     roofAgeMin: toOptionalNumber(radius.roofAgeMin),
     jurisdiction: radius.jurisdiction === '' ? undefined : radius.jurisdiction,
     ownerOutOfArea: radius.ownerOutOfArea === '' ? undefined : radius.ownerOutOfArea === 'true',
+    openRoofingOnly: radius.openRoofing === 'true' ? true : undefined,
+    minOpenRoofingYears: toOptionalNumber(radius.minOpenRoofingYears),
     sort: radius.sort,
     page: radius.page,
     pageSize: radius.pageSize,
+  };
+}
+
+export function radiusFromAgent(
+  current: RadiusQuery,
+  query: {
+    near: string;
+    radiusMiles: number;
+    roofAgeMin: number | null;
+    openRoofingOnly: boolean;
+    minOpenRoofingYears: number | null;
+    sort: NearbySortKey;
+  },
+): RadiusQuery {
+  return {
+    ...EMPTY_RADIUS,
+    pageSize: current.pageSize,
+    near: query.near,
+    radiusMiles: String(query.radiusMiles),
+    roofAgeMin: query.roofAgeMin === null ? '' : String(query.roofAgeMin),
+    openRoofing: query.openRoofingOnly ? 'true' : '',
+    minOpenRoofingYears: query.minOpenRoofingYears === null ? '' : String(query.minOpenRoofingYears),
+    sort: query.sort,
   };
 }
 

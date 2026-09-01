@@ -9,6 +9,7 @@ import type {
   APIGatewayProxyStructuredResultV2,
   Context,
 } from 'aws-lambda';
+import { writeAgentNdjson } from './agent-http-stream';
 import { createContext } from './context';
 import { logger, metrics, recordWork, tracer } from './observability';
 import { appRouter } from './routers/index';
@@ -28,7 +29,22 @@ async function baseHandler(
   return recordWork(METRIC_ITEMS.request, () => trpcHandler(event, context));
 }
 
-export const handler = middy(baseHandler)
+const middyHandler = middy(baseHandler)
   .use(injectLambdaContext(logger))
   .use(captureLambdaHandler(tracer))
   .use(logMetrics(metrics));
+
+/**
+ * tRPC over API Gateway. Kept as a buffered handler so existing /trpc routes
+ * do not depend on Lambda response streaming.
+ */
+export const handler = middyHandler;
+
+/**
+ * Bedrock token stream. Deployed as a second Function URL with RESPONSE_STREAM.
+ */
+export const stream = awslambda.streamifyResponse(
+  async (event: APIGatewayProxyEventV2, responseStream) => {
+    await writeAgentNdjson(event, responseStream);
+  },
+);

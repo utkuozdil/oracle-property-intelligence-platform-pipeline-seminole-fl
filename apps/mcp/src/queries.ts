@@ -1,16 +1,14 @@
 import type { ServerConfig } from './config';
 import type { DuckDbOptions } from './duckdb';
-import { queryOne, queryRows, sqlString } from './duckdb';
+import { queryOne, queryRows, sqlPath, sqlString } from './duckdb';
 import {
-  bbbCte,
-  contractorKey,
   describeEnrichment,
   needsS3,
   normaliseParcelId,
-  permitsCte,
-  resolveBbb,
+  openRoofingCte,
+  resolvePermitSource,
 } from './enrichment';
-import type { EnrichmentStatus, ResolvedBbb } from './enrichment';
+import type { EnrichmentStatus, ResolvedPermits } from './enrichment';
 import type { OrderKey, PropertyFilters } from './filters';
 import {
   ORDER_BY,
@@ -69,7 +67,7 @@ const NO_COORDINATE_ASSUMPTION =
 export class OracleDataset {
   private readonly dataset: PublishedDataset;
   private readonly duck: DuckDbOptions;
-  private bbb: ResolvedBbb | null = null;
+  private permits: ResolvedPermits | null = null;
 
   constructor(private readonly config: ServerConfig) {
     this.dataset = new PublishedDataset(config);
@@ -179,7 +177,9 @@ export class OracleDataset {
         ...envelope,
       };
     }
-    return { found: true, property, ...envelope };
+
+    const openRoofing = await this.openRoofingFor(normalised);
+    return { found: true, property, openRoofing, ...envelope };
   }
 
   async searchProperties(input: {
@@ -257,22 +257,46 @@ export class OracleDataset {
     };
   }
 
+  private async resolvedPermits(): Promise<ResolvedPermits | null> {
+    const uri = this.config.enrichment.permitPointerUri;
+    if (uri === null) return null;
+    if (this.permits === null) {
+      this.permits = await resolvePermitSource(uri, this.duck);
+    }
+    return this.permits;
+  }
+
+  private async openRoofingFor(parcelId: string): Promise<Row[] | { available: false; reason: string }> {
+    const source = await this.resolvedPermits();
+    if (source === null) {
+      return { available: false, reason: this.enrichment().permits.reason };
+    }
+    const { rows } = await this.run(
+      `WITH ${openRoofingCte(source.parquetUri)}
+       SELECT application_no, permit_type, contractor_name, open_years, bbb_lookup, bbb_rating
+       FROM open_permits
+       WHERE parcelKey = ${sqlString(parcelId)}
+       ORDER BY open_years DESC;`,
+    );
+    return rows;
+  }
+
   /**
    * The demo's headline question, as one call.
    *
    * "Which properties near that area have open roofing permits that have been open for
    * many years, and who is the listed contractor?"
    *
-   * The published dataset answers the *near that area* and *aged roof* halves of it and
-   * nothing else, so when permit enrichment is not configured this returns the aged-roof
-   * candidates with an explicit statement that the permit half is unanswered. It does
-   * not return an empty list and let the caller read that as "no such properties".
+   * When the published permit snapshot is not configured this returns aged-roof
+   * candidates and says the permit half is unanswered. It does not return an empty list
+   * and let the caller read that as "no such properties". `unknown` status is never
+   * treated as open.
    */
   async findRoofingLeads(input: {
     latitude: number;
     longitude: number;
     radiusMiles: number;
-    minRoofAge: number;
+    minRoofAge?: number;
     minPermitOpenYears: number;
     limit?: number;
   }): Promise<Row> {
@@ -284,7 +308,10 @@ export class OracleDataset {
         latitude: input.latitude,
         longitude: input.longitude,
         radiusMiles: input.radiusMiles,
-        filters: { minRoofAge: input.minRoofAge, hasBuilding: true },
+        filters: {
+          minRoofAge: input.minRoofAge,
+          hasBuilding: true,
+        },
         limit,
       });
       return {
@@ -310,7 +337,11 @@ export class OracleDataset {
       };
     }
 
-    const permitUri = this.config.enrichment.permitStatusUri as string;
+    const source = await this.resolvedPermits();
+    if (source === null) {
+      throw new Error('permit pointer is configured but failed to resolve');
+    }
+
     const table = await this.dataset.table();
     const distance = haversineMiles(input.latitude, input.longitude);
     const predicates = [
@@ -319,44 +350,18 @@ export class OracleDataset {
       ...buildPredicates({ minRoofAge: input.minRoofAge }),
     ];
 
-    if (this.bbb === null && this.config.enrichment.bbbPointerUri !== null) {
-      this.bbb = await resolveBbb(this.config.enrichment.bbbPointerUri, this.duck);
-    }
-    const withBbb = this.bbb !== null;
-
-    const ctes = [
-      `props AS (
+    const sql = `WITH props AS (
          SELECT ${SUMMARY_PROJECTION}, ${distance} AS miles_from_pin
          FROM ${table} ${whereClause(predicates)}
-       )`,
-      permitsCte(permitUri),
-      `open_permits AS (
-         SELECT *,
-                round(date_diff('day', applicationDate, current_date) / 365.25, 1) AS open_years
-         FROM permits
-         WHERE roofingRelevant AND NOT terminal AND applicationDate IS NOT NULL
-       )`,
-      ...(withBbb && this.bbb !== null ? [bbbCte(this.bbb.matchesUri)] : []),
-    ];
-
-    const join = withBbb
-      ? `LEFT JOIN bbb b ON b.contractor_key = ${contractorKey('o.contractorName')}`
-      : '';
-    const bbbColumns = withBbb
-      ? `b.bbbBusinessName, b.bbbRating, b.bbbAccredited, b.bbbProfileUrl, b.bbbMatchConfidence,`
-      : '';
-
-    const sql = `WITH ${ctes.join(',\n')}
+       ),
+       ${openRoofingCte(source.parquetUri)}
       SELECT p.parcel_id, p.primary_address, p.jurisdiction, p.owner_name, p.roof_age,
              p.year_built, p.total_just_value, round(p.miles_from_pin, 2) AS miles_from_pin,
-             o.appNo AS permit_number, o.applicationDate::VARCHAR AS permit_applied_on,
-             o.applicationType AS permit_type, o.rawStatus AS permit_status,
-             o.lifecycle AS permit_lifecycle, o.open_years AS permit_open_years,
-             o.contractorName AS listed_contractor, ${bbbColumns}
-             ${withBbb ? `'normalized-name'` : `NULL`} AS contractor_match_method
+             o.application_no AS permit_number, o.issued_on AS permit_issued_on,
+             o.permit_type, o.status AS permit_status, o.open_years AS permit_open_years,
+             o.contractor_name AS listed_contractor, o.bbb_lookup, o.bbb_rating
       FROM props p
       JOIN open_permits o ON o.parcelKey = p.parcel_id
-      ${join}
       WHERE p.miles_from_pin <= ${input.radiusMiles}
         AND o.open_years >= ${input.minPermitOpenYears}
       ORDER BY o.open_years DESC, p.roof_age DESC
@@ -364,68 +369,53 @@ export class OracleDataset {
 
     const { rows, state, queryMs } = await this.run<Row>(sql);
     const coverage = await queryOne<Row>(
-      `WITH ${permitsCte(permitUri)}
-       SELECT count(*)::BIGINT                                            AS permits_in_sweep,
-              count_if(roofingRelevant)::BIGINT                           AS roofing_permits,
-              count_if(roofingRelevant AND NOT terminal)::BIGINT          AS open_roofing_permits,
-              count(DISTINCT parcelKey)::BIGINT                           AS parcels_covered,
-              (SELECT count(DISTINCT t.parcel_id)
-               FROM ${table} t WHERE t.parcel_id IN (SELECT parcelKey FROM permits))::BIGINT
-                                                                          AS parcels_matched_to_published,
-              181218                                                      AS parcels_published
-       FROM permits;`,
+      `SELECT count(*)::BIGINT AS permit_rows,
+              count_if(roofing_relevant)::BIGINT AS roofing_permits,
+              count_if(roofing_relevant AND status = 'open')::BIGINT AS open_roofing_permits,
+              count_if(status = 'unknown')::BIGINT AS unknown_status_rows,
+              count(DISTINCT parcel_id)::BIGINT AS parcels_covered
+       FROM read_parquet(${sqlPath(source.parquetUri)});`,
       this.duck,
     );
 
     return {
       question:
-        'Properties near a point with open roofing permits held open for years, and the ' +
+        'Properties near a point with confirmed-open roofing permits held open for years, and the ' +
         'listed contractor.',
       answered: 'yes, within the coverage stated below',
       centre: { latitude: input.latitude, longitude: input.longitude },
       radiusMiles: input.radiusMiles,
-      minRoofAge: input.minRoofAge,
+      minRoofAge: input.minRoofAge ?? null,
       minPermitOpenYears: input.minPermitOpenYears,
       returned: rows.length,
       leads: rows,
       permitEvidence: {
         available: true,
-        source: permitUri,
+        source: source.parquetUri,
+        pointer: source.pointerUri,
+        runId: source.runId,
+        publishedAt: source.publishedAt,
+        referenceDate: source.referenceDate,
         reason: enrichment.permits.reason,
-        sweepCoverage: coverage,
+        snapshotCoverage: coverage,
       },
-      bbbEvidence: withBbb
-        ? {
-            available: true,
-            ...this.bbb,
-            // Reported per result set because most permit contractors in a mixed sweep are
-            // not roofers at all — awning, screen and sign companies, and individual
-            // owner-builders — and BBB's roofing corpus rightly does not list them.
-            contractorsInResult: new Set(rows.map((row) => row.listed_contractor)).size,
-            contractorsWithRating: rows.filter((row) => row.bbbRating !== null).length,
-            reason: enrichment.bbb.reason,
-          }
-        : { available: false, reason: enrichment.bbb.reason },
+      bbbEvidence: {
+        available: true,
+        contractorsInResult: new Set(rows.map((row) => row.listed_contractor)).size,
+        contractorsWithRating: rows.filter((row) => row.bbb_rating !== null).length,
+        reason: enrichment.bbb.reason,
+      },
       source: this.describeSource(state, queryMs),
       assumptions: [
         CENTROID_ASSUMPTION,
         ROOF_AGE_ASSUMPTION,
-        'A permit counts as open when the county status is non-terminal. Age is measured from ' +
-          'the application date, because the sweep records no close date for most rows.',
-        'Permit coverage is a staged sweep, not the whole county: parcels outside it show no ' +
-          'permits regardless of what the county holds. Compare parcels_covered against ' +
-          'parcels_published in sweepCoverage before reading absence as evidence.',
-        'Permits carry the county parcel id with separators (15-21-29-527-0000-0140); the ' +
-          'published table stores it without them. They are joined on the stripped form. A ' +
-          'permit whose parcel is absent from the published snapshot cannot appear here.',
-        ...(withBbb
-          ? [
-              'Contractor names are joined to BBB on a normalised name (upper-cased, ' +
-                'parentheticals, punctuation and corporate suffixes removed). It is fuzzy; ' +
-                'contractor_match_method records that.',
-              'A null bbbRating means BBB lists no rating for that contractor, not a poor one.',
-            ]
-          : []),
+        'A permit counts as open only when the published status is "open". Status "unknown" ' +
+          'means the detail has not been harvested. It is not treated as open, and it is not ' +
+          'treated as closed.',
+        'Years-open are the published observation, measured at referenceDate on the snapshot, ' +
+          'not recomputed against today.',
+        'BBB ratings ride on the permit row (bbb_lookup, bbb_rating). A null rating means the ' +
+          'contractor was not rated, not a poor rating.',
       ],
       missingData: missingDataNotes(enrichment),
     };

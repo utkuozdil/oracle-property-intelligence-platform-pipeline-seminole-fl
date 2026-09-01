@@ -21,6 +21,8 @@ About **181,000 parcels** are in the published roll.
 | Feature | What you can do |
 | --- | --- |
 | Run summary | See what has loaded — properties, permits, contractors, incomplete sources |
+| DuckDB | Copy-paste SQL on the run summary that queries the published Parquet — no hosted database |
+| MCP | Link to the agent-access guide; each consumer runs `just mcp-serve` against the same IPNS name |
 | Parcel search | Look up a property by address or parcel id |
 | Radius search | Nearby parcels by centre and distance (no sales filters) |
 | Owner view | Other parcels the same owner holds in the county |
@@ -33,6 +35,8 @@ About **181,000 parcels** are in the published roll.
 | Sources loaded | Properties, permits, contractors |
 | Incomplete sources | Anything still in progress |
 | Counts + last collected | Coverage without opening the CRM |
+| DuckDB snippet | SQL that opens the published query-table Parquet |
+| MCP link | Agent-access guide plus `just mcp-serve` / `just mcp-probe` |
 
 Sources that never loaded stay off the main list.
 

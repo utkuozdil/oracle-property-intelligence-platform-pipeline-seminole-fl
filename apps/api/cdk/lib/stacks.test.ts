@@ -2,7 +2,7 @@ import { SERVICE_NAME } from '@oracle-seminole/shared';
 import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ApiStack } from './api-stack';
+import { ApiStack, NLQ_MODEL_ID } from './api-stack';
 import { CoreStack } from './core-stack';
 import { PipelineStack } from './pipeline-stack';
 
@@ -208,6 +208,26 @@ describe('the tRPC API', () => {
     apiTemplate.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'ANY /trpc/{proxy+}',
     });
+  });
+
+  it('configures the agent model and grants Bedrock invoke', () => {
+    apiTemplate.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ NLQ_MODEL_ID }) },
+    });
+    apiTemplate.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'bedrock:InvokeModel',
+            Resource: Match.arrayWith([Match.stringLikeRegexp('foundation-model')]),
+          }),
+        ]),
+      }),
+    });
+  });
+
+  it('pins the agent to Claude Haiku 4.5', () => {
+    expect(NLQ_MODEL_ID).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0');
   });
 });
 

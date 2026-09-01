@@ -1,5 +1,13 @@
 import { z } from 'zod';
 import { publicProcedure, router } from '../trpc';
+import { logger } from '../observability';
+import {
+  getPermitLookup,
+  openRoofingCard,
+  parcelPermits,
+  type PermitCoverage,
+  type PermitLookup,
+} from './permit-lookup';
 import {
   NEARBY_SORT_KEYS,
   SORT_KEYS,
@@ -8,6 +16,7 @@ import {
   resolveCentre,
   searchNearby,
   searchParcels,
+  type NearbyPermitOptions,
   type NearbySortKey,
   type ParcelFilters,
   type SortKey,
@@ -43,6 +52,9 @@ const nearbyInput = searchInput
     near: z.string().max(120).optional(),
     radiusMiles: z.number().positive().max(MAX_RADIUS_MILES).default(1),
     sort: z.enum(NEARBY_SORT_KEYS).default('distance_asc'),
+    /** Confirmed-open roofing only. `unknown` status is not open. */
+    openRoofingOnly: z.boolean().optional(),
+    minOpenRoofingYears: z.number().min(0).max(80).optional(),
   })
   .refine(
     (value) =>
@@ -131,7 +143,18 @@ export const parcelsRouter = router({
    */
   nearby: publicProcedure.input(nearbyInput).query(async ({ input }) => {
     const store = await getParcelStore();
-    const { sort, page, pageSize, radiusMiles, lat, lon, near, ...rest } = input;
+    const {
+      sort,
+      page,
+      pageSize,
+      radiusMiles,
+      lat,
+      lon,
+      near,
+      openRoofingOnly,
+      minOpenRoofingYears,
+      ...rest
+    } = input;
 
     const centre =
       lat !== undefined && lon !== undefined
@@ -160,19 +183,29 @@ export const parcelsRouter = router({
       ownerOutOfArea: rest.ownerOutOfArea,
     };
 
+    const permits = await loadPermits();
+    const permitOptions = nearbyPermitOptions(permits, openRoofingOnly, minOpenRoofingYears);
+    const result = searchNearby(
+      store,
+      centre.center,
+      radiusMiles,
+      filters,
+      sort as NearbySortKey,
+      page,
+      pageSize,
+      permitOptions,
+    );
+
     return {
       resolved: true as const,
       centre,
       runId: store.pointer.runId,
-      ...searchNearby(
-        store,
-        centre.center,
-        radiusMiles,
-        filters,
-        sort as NearbySortKey,
-        page,
-        pageSize,
-      ),
+      ...result,
+      rows: result.rows.map((row) => ({
+        ...row,
+        openRoofing: permits === null ? null : openRoofingCard(permits, row.parcelId),
+      })),
+      permits: permitCoverageBlock(permits, openRoofingOnly === true),
     };
   }),
 
@@ -180,9 +213,46 @@ export const parcelsRouter = router({
     .input(z.object({ parcelId: z.string().min(1).max(64) }))
     .query(async ({ input }) => {
       const store = await getParcelStore();
+      const parcel = getParcelDetail(store, input.parcelId);
+      const permits = parcel === null ? null : await loadPermits();
       return {
-        parcel: getParcelDetail(store, input.parcelId),
+        parcel,
+        permits: permits === null ? { available: false as const } : parcelPermits(permits, input.parcelId),
         runId: store.pointer.runId,
       };
     }),
 });
+
+async function loadPermits(): Promise<PermitLookup | null> {
+  try {
+    return await getPermitLookup();
+  } catch (error: unknown) {
+    logger.error('permit lookup failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function nearbyPermitOptions(
+  permits: PermitLookup | null,
+  openRoofingOnly: boolean | undefined,
+  minOpenRoofingYears: number | undefined,
+): NearbyPermitOptions | undefined {
+  if (permits === null) return undefined;
+  return {
+    openRoofingOnly,
+    minOpenRoofingYears,
+    yearsByParcel: permits.openRoofingYearsByParcel,
+  };
+}
+
+function permitCoverageBlock(
+  permits: PermitLookup | null,
+  filterActive: boolean,
+):
+  | { available: false }
+  | { available: true; coverage: PermitCoverage; filterActive: boolean } {
+  if (permits === null) return { available: false };
+  return { available: true, coverage: permits.coverage, filterActive };
+}

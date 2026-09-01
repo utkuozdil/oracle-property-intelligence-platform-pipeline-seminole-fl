@@ -70,7 +70,7 @@ describe('the MCP server', () => {
 describe('the tool descriptions', () => {
   it('warn about the permit gap where an agent will actually read them', () => {
     const leads = TOOLS.find((tool) => tool.name === 'find_roofing_leads');
-    expect(leads?.description).toContain('NOT part of the published open dataset');
+    expect(leads?.description).toContain('NOT in the IPFS query table');
 
     const describe = TOOLS.find((tool) => tool.name === 'describe_dataset');
     expect(describe?.description).toContain('never mistaken for "no permits"');

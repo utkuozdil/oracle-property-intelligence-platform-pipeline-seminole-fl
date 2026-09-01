@@ -33,16 +33,13 @@ const SANFORD = { latitude: 28.8117, longitude: -81.2734 };
  * copy does, and the server reports the permit half of the headline question as
  * unanswered. Both are worth seeing, so neither is the hidden one.
  *
- * The BBB entry is the `current.json` pointer, never the run prefix: superseded runs are
- * left in place beside the current one and a glob silently unions them. There is no such
- * pointer for permits, so that one is a glob over every sweep, deduplicated on the permit
- * number inside the query.
+ * The permit pointer is `publish/permits/current.json`, the same generation the API reads.
+ * Status `unknown` is not treated as open.
  */
 function enrichmentFromBucket(env: NodeJS.ProcessEnv): void {
   const bucket = env.ORACLE_DATA_BUCKET?.trim();
   if (bucket === undefined || bucket === '') return;
-  env.ORACLE_PERMIT_STATUS_URI ??= `s3://${bucket}/staged/permits/status/run=*/batch-*.ndjson`;
-  env.ORACLE_BBB_POINTER_URI ??= `s3://${bucket}/staged/bbb/contractor-ratings/current.json`;
+  env.ORACLE_PERMIT_POINTER_URI ??= `s3://${bucket}/publish/permits/current.json`;
 }
 
 const STEPS: Step[] = [
@@ -73,7 +70,7 @@ const STEPS: Step[] = [
   {
     label: 'The headline question: open roofing permits held open for years, and the contractor',
     tool: 'find_roofing_leads',
-    args: { ...SANFORD, radiusMiles: 5, minRoofAge: 15, minPermitOpenYears: 3, limit: 5 },
+    args: { ...SANFORD, radiusMiles: 5, minPermitOpenYears: 3, limit: 5 },
   },
 ];
 
@@ -110,9 +107,10 @@ async function main(): Promise<void> {
   await client.connect(transport);
   out(`connected over stdio in ${Date.now() - connectStart} ms`);
   out(
-    process.env.ORACLE_PERMIT_STATUS_URI === undefined
+    process.env.ORACLE_PERMIT_POINTER_URI === undefined &&
+      process.env.ORACLE_DATA_BUCKET === undefined
       ? 'permit/BBB enrichment: OFF (this is what an outside consumer sees)'
-      : 'permit/BBB enrichment: ON (private staged sources, operator only)',
+      : 'permit/BBB enrichment: ON (published permit snapshot, operator only)',
   );
 
   const { tools } = await client.listTools();

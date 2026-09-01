@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  contractorKey,
   describeEnrichment,
   needsS3,
   normaliseParcelId,
-  permitsCte,
+  openRoofingCte,
+  uriLooksLikeParquet,
 } from './enrichment';
 
 describe('normaliseParcelId', () => {
@@ -20,60 +20,55 @@ describe('normaliseParcelId', () => {
 
 describe('describeEnrichment', () => {
   it('reports permits as unavailable, with a reason, when nothing is configured', () => {
-    const status = describeEnrichment({ permitStatusUri: null, bbbPointerUri: null });
+    const status = describeEnrichment({ permitPointerUri: null });
     expect(status.permits.available).toBe(false);
     expect(status.bbb.available).toBe(false);
-    // The specific failure this guards against: a consumer reading an empty permit list
-    // as "this property has no permits".
-    expect(status.permits.reason).toContain('not "no permits"');
+    expect(status.permits.reason).toContain('not answered as zero');
   });
 
-  it('still qualifies the answer when a sweep is configured', () => {
+  it('still qualifies the answer when the published snapshot is configured', () => {
     const status = describeEnrichment({
-      permitStatusUri: 's3://bucket/staged/permits/status/run=x/batch-0000.ndjson',
-      bbbPointerUri: null,
+      permitPointerUri: 's3://bucket/publish/permits/current.json',
     });
     expect(status.permits.available).toBe(true);
-    expect(status.permits.reason).toContain('not the whole county');
+    expect(status.permits.reason).toContain('unknown');
+    expect(status.bbb.available).toBe(true);
   });
 });
 
 describe('needsS3', () => {
   it('is false when nothing is configured, so no AWS extension is loaded', () => {
-    expect(needsS3({ permitStatusUri: null, bbbPointerUri: null })).toBe(false);
+    expect(needsS3({ permitPointerUri: null })).toBe(false);
   });
 
   it('is false for local files', () => {
-    expect(needsS3({ permitStatusUri: '/tmp/permits.ndjson', bbbPointerUri: null })).toBe(false);
+    expect(needsS3({ permitPointerUri: '/tmp/permits.parquet' })).toBe(false);
   });
 
-  it('is true as soon as one source is on S3', () => {
-    expect(needsS3({ permitStatusUri: null, bbbPointerUri: 's3://bucket/current.json' })).toBe(
-      true,
-    );
+  it('is true as soon as the pointer is on S3', () => {
+    expect(needsS3({ permitPointerUri: 's3://bucket/publish/permits/current.json' })).toBe(true);
   });
 });
 
-describe('contractorKey', () => {
-  it('strips parentheticals, punctuation and a trailing corporate suffix', () => {
-    const expression = contractorKey('name');
-    expect(expression).toContain('upper(name)');
-    expect(expression).toContain('INC|INCORPORATED|LLC');
-  });
-});
-
-describe('permitsCte', () => {
-  it('deduplicates on the permit number so one permit is not counted open twice', () => {
-    const cte = permitsCte('s3://bucket/permits.ndjson');
-    expect(cte).toContain('PARTITION BY appNo');
-    expect(cte).toContain('closedDate IS NOT NULL');
+describe('openRoofingCte', () => {
+  it('counts only confirmed-open roofing rows', () => {
+    const cte = openRoofingCte('s3://bucket/permits.parquet');
+    expect(cte).toContain("status = 'open'");
+    expect(cte).not.toContain('NOT terminal');
   });
 
   it('exposes the stripped parcel key the published table joins on', () => {
-    expect(permitsCte('s3://bucket/permits.ndjson')).toContain("replace(parcelId, '-', '')");
+    expect(openRoofingCte('s3://bucket/permits.parquet')).toContain("replace(parcel_id, '-', '')");
   });
 
   it('escapes the configured location rather than interpolating it raw', () => {
-    expect(permitsCte("s3://bucket/it's.ndjson")).toContain("'s3://bucket/it''s.ndjson'");
+    expect(openRoofingCte("s3://bucket/it's.parquet")).toContain("'s3://bucket/it''s.parquet'");
+  });
+});
+
+describe('uriLooksLikeParquet', () => {
+  it('treats a direct parquet path as ready to read', () => {
+    expect(uriLooksLikeParquet('s3://bucket/permits.parquet')).toBe(true);
+    expect(uriLooksLikeParquet('s3://bucket/publish/permits/current.json')).toBe(false);
   });
 });

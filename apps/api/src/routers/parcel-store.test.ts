@@ -208,6 +208,24 @@ describe('searchNearby', () => {
     expect(first.pageCount).toBe(2);
   });
 
+  it('keeps only parcels with a confirmed-open roofing permit and sorts longest first', () => {
+    const years = new Map<string, number>([
+      ['P-CENTRE', 4.2],
+      ['P-TWO', 12.5],
+    ]);
+    const result = searchNearby(
+      store,
+      SANFORD,
+      3,
+      {},
+      'permit_open_desc',
+      1,
+      25,
+      { openRoofingOnly: true, yearsByParcel: years },
+    );
+    expect(result.rows.map((row) => row.parcelId)).toEqual(['P-TWO', 'P-CENTRE']);
+  });
+
   it('matches nothing when a filter names an unknown jurisdiction', () => {
     const result = searchNearby(
       store,

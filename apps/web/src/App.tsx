@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AgentView } from './AgentView';
 import { OwnerDetailView } from './OwnerViews';
 import { ParcelDetailView } from './ParcelDetailView';
 import { RadiusSearchView, type RadiusState } from './RadiusSearchView';
@@ -24,7 +25,22 @@ const NAV_ITEMS: { view: ViewName; label: string }[] = [
   { view: 'runs', label: 'Run summary' },
   { view: 'search', label: 'Parcel search' },
   { view: 'radius', label: 'Radius search' },
+  { view: 'agent', label: 'Ask the agent' },
 ];
+
+function formatQueryError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes('radiusMiles') && /too_big|<=\s*50/i.test(raw)) {
+    return 'Radius can be at most 50 miles — that covers the whole county.';
+  }
+  if (raw.includes('Provide either lat and lon')) {
+    return 'Enter a place name, or a latitude and longitude.';
+  }
+  if (raw.trimStart().startsWith('[')) {
+    return 'That search could not be run. Check the centre and keep the radius at 50 miles or less.';
+  }
+  return raw;
+}
 
 /**
  * URL-driven shell. Every piece of view state — which view is open, filters, the radius
@@ -123,7 +139,7 @@ export function App() {
         if (requestSeq.current !== seq) return;
         setSearch({
           status: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: formatQueryError(error),
         });
       });
   }, [query]);
@@ -153,7 +169,7 @@ export function App() {
         if (radiusSeq.current !== seq) return;
         setRadius({
           status: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: formatQueryError(error),
         });
       });
   }, [radiusActive, radiusQuery]);
@@ -230,6 +246,13 @@ export function App() {
             onApply={onApplyRadius}
             onOpenParcel={onOpenParcel}
             onOpenOwner={onOpenOwner}
+          />
+        ) : state.view === 'agent' ? (
+          <AgentView
+            currentNear={state.radius.near}
+            currentRadiusMiles={state.radius.radiusMiles}
+            currentRoofAgeMin={state.radius.roofAgeMin}
+            onOpenParcel={onOpenParcel}
           />
         ) : (
           <SearchView

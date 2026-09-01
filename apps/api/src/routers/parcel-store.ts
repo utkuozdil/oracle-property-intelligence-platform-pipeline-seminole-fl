@@ -490,6 +490,7 @@ export async function getParcelStore(): Promise<ParcelStore> {
 export const SORT_KEYS = [
   'relevance',
   'roof_age_desc',
+  'roof_age_asc',
   'total_just_value_desc',
   'total_just_value_asc',
   'years_since_sale_desc',
@@ -503,6 +504,7 @@ export interface ParcelFilters {
   q?: string;
   jurisdiction?: string;
   roofAgeMin?: number;
+  roofAgeMax?: number;
   justValueMin?: number;
   justValueMax?: number;
   yearBuiltMin?: number;
@@ -559,6 +561,10 @@ function buildPredicate(
     if (filters.roofAgeMin !== undefined) {
       const roofAge = store.roofAge[i] as number;
       if (roofAge === INT_NULL || roofAge < filters.roofAgeMin) return false;
+    }
+    if (filters.roofAgeMax !== undefined) {
+      const roofAge = store.roofAge[i] as number;
+      if (roofAge === INT_NULL || roofAge > filters.roofAgeMax) return false;
     }
     if (filters.yearsSinceSaleMin !== undefined) {
       const years = store.yearsSinceSale[i] as number;
@@ -636,6 +642,7 @@ function sortMatches(store: ParcelStore, matches: Int32Array, sort: SortKey): In
 
   const comparators: Record<Exclude<SortKey, 'relevance'>, (a: number, b: number) => number> = {
     roof_age_desc: descInt(store.roofAge),
+    roof_age_asc: ascInt(store.roofAge),
     years_since_sale_desc: descInt(store.yearsSinceSale),
     year_built_asc: ascInt(store.yearBuilt),
     year_built_desc: descInt(store.yearBuilt),
@@ -804,8 +811,14 @@ export function boundingBoxFor(center: GeoPoint, radiusMiles: number): BoundingB
   };
 }
 
-export const NEARBY_SORT_KEYS = ['distance_asc', ...SORT_KEYS] as const;
+export const NEARBY_SORT_KEYS = ['distance_asc', 'permit_open_desc', ...SORT_KEYS] as const;
 export type NearbySortKey = (typeof NEARBY_SORT_KEYS)[number];
+
+export interface NearbyPermitOptions {
+  openRoofingOnly?: boolean;
+  minOpenRoofingYears?: number;
+  yearsByParcel: ReadonlyMap<string, number>;
+}
 
 export interface NearbyRow extends ParcelSummary {
   distanceMiles: number;
@@ -837,6 +850,7 @@ export function searchNearby(
   sort: NearbySortKey,
   page: number,
   pageSize: number,
+  permit?: NearbyPermitOptions,
 ): NearbyResult {
   const startedAt = Date.now();
   const box = boundingBoxFor(center, radiusMiles);
@@ -857,6 +871,16 @@ export function searchNearby(
       const distance = haversineMiles(center, { lat, lon });
       if (distance > radiusMiles) continue;
       if (!accepts(i)) continue;
+      if (permit?.openRoofingOnly) {
+        const years = permit.yearsByParcel.get(store.parcelId[i] as string);
+        if (years === undefined) continue;
+        if (
+          permit.minOpenRoofingYears !== undefined &&
+          years < permit.minOpenRoofingYears
+        ) {
+          continue;
+        }
+      }
 
       rows.push(i);
       distances.set(i, distance);
@@ -865,6 +889,16 @@ export function searchNearby(
 
   if (sort === 'distance_asc') {
     rows.sort((a, b) => (distances.get(a) as number) - (distances.get(b) as number));
+  } else if (sort === 'permit_open_desc') {
+    const yearsByParcel = permit?.yearsByParcel;
+    rows.sort((a, b) => {
+      const left = yearsByParcel?.get(store.parcelId[a] as string);
+      const right = yearsByParcel?.get(store.parcelId[b] as string);
+      if (left === undefined) return right === undefined ? 0 : 1;
+      if (right === undefined) return -1;
+      if (right !== left) return right - left;
+      return (distances.get(a) as number) - (distances.get(b) as number);
+    });
   } else {
     const ordered = sortMatches(store, Int32Array.from(rows), sort as SortKey);
     rows.length = 0;

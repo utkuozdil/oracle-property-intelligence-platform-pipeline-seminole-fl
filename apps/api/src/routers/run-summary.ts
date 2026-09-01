@@ -28,6 +28,10 @@ const CACHE_TTL_MS = 60 * 1000;
 const MANIFEST_PREFIX = 'manifests/';
 const PERMIT_MANIFEST_PREFIX = 'manifests/permits/';
 const PUBLISH_POINTER_KEY = 'publish/current.json';
+const BBB_POINTER_KEY = 'staged/bbb/contractor-ratings/current.json';
+const PLACES_POINTER_KEY = 'publish/places/current.json';
+const LICENCE_POINTER_KEY = 'staged/licences/contractor-licences/current.json';
+const FDOR_POINTER_KEY = 'raw/fdor/current.json';
 
 /** Prefixes under `manifests/` that are not per-run history. */
 const NON_RUN_PREFIXES = new Set([`${MANIFEST_PREFIX}current/`, PERMIT_MANIFEST_PREFIX]);
@@ -164,6 +168,53 @@ const PermitSummarySchema = z
     coverage: z.record(z.string(), z.unknown()).optional(),
   })
   .loose();
+
+const BbbPointerSchema = z
+  .object({
+    runId: looseString,
+    generatedAt: looseString,
+    businessCount: looseNumber,
+    matchedContractorCount: looseNumber,
+    matchRate: looseNumber,
+  })
+  .loose();
+
+const PlacesPointerSchema = z
+  .object({
+    release: looseString,
+    runId: looseString,
+    publishedAt: looseString,
+    businessLocations: looseNumber,
+    roofingPlaces: looseNumber,
+  })
+  .loose();
+
+const LicencePointerSchema = z
+  .object({
+    runId: looseString,
+    generatedAt: looseString,
+    sourceLastModified: looseString,
+    licenceCount: looseNumber,
+    matchedContractorCount: looseNumber,
+    matchRate: looseNumber,
+    contractorsWithAdverseLicence: looseNumber,
+  })
+  .loose();
+
+const FdorPointerSchema = z
+  .object({
+    runId: looseString,
+    recordCount: looseNumber,
+    acquiredAt: looseString,
+  })
+  .loose();
+
+type LandedPointers = {
+  bbb: z.infer<typeof BbbPointerSchema> | null;
+  places: z.infer<typeof PlacesPointerSchema> | null;
+  licences: z.infer<typeof LicencePointerSchema> | null;
+  fdor: z.infer<typeof FdorPointerSchema> | null;
+};
 
 const PermitCoverageSchema = z
   .object({
@@ -821,164 +872,165 @@ export function collectIpfsReferences(value: unknown): {
 }
 
 /**
- * The source catalogue, one entry per record class the brief asks about.
+ * One row per upstream, not per file inside that upstream.
  *
- * Counts come from the run manifest where the source is ingested. Sources that were
- * researched but not loaded keep their entry with the measured record count that *would*
- * land, marked `not-ingested`, because omitting them silently would misrepresent coverage.
+ * Status and counts are read from the pointers and manifests in the data lake. A
+ * source with no pointer is `not-ingested`; the UI hides those until they land.
  */
 function buildSources(
   current: RunHistoryEntry | null,
   permits: RunSummary['permits'],
   parcelStats: { withCoordinates: number | null; withOwnerName: number | null } | null,
+  landed: LandedPointers,
 ): SourceEntry[] {
   const recordCount = (name: string): number | null =>
     current?.recordCounts.find((entry) => entry.name === name)?.count ?? null;
 
-  const camaCollectedAt = current?.upstream?.lastModified ?? current?.finishedAt ?? null;
-  const camaUrl = current?.upstream?.url ?? 'https://files.scpafl.org/data/cama/SeminoleCounty.zip';
+  const countyFileAt = current?.upstream?.lastModified ?? current?.finishedAt ?? null;
+  const countyFileUrl =
+    current?.upstream?.url ?? 'https://files.scpafl.org/data/cama/SeminoleCounty.zip';
+  const { bbb, places, licences, fdor } = landed;
 
-  const entries: SourceEntry[] = [
+  return [
     {
-      id: 'cama-parcels',
-      label: 'SCPA CAMA extract — parcel roll',
+      id: 'scpa-cama',
+      label: 'Seminole County Property Appraiser',
       category: 'property',
       status: current === null ? 'not-ingested' : 'ingested',
       records: recordCount('Parcels.csv') ?? current?.parcelCount ?? null,
       recordUnit: 'parcels',
-      collectedAt: camaCollectedAt,
-      role: 'System of record',
-      cadence: 'Nightly full extract, fingerprinted and diffed per run',
-      provenance: camaUrl,
-      artifactPrefix: 'publish/parcels/',
-      notes:
-        current === null
-          ? null
-          : `Nine input files totalling ${(current.inputRecords ?? 0).toLocaleString('en-US')} rows collapse into one row per parcel.`,
-    },
-    {
-      id: 'cama-buildings',
-      label: 'SCPA CAMA extract — buildings and features',
-      category: 'property',
-      status: current === null ? 'not-ingested' : 'ingested',
-      records:
-        (recordCount('buildings.csv') ?? 0) +
-          (recordCount('BuildingSummarys.csv') ?? 0) +
-          (recordCount('ExtraFeature.csv') ?? 0) || null,
-      recordUnit: 'building and feature rows',
-      collectedAt: camaCollectedAt,
-      role: 'Roof age, living area, and structure attributes',
-      cadence: 'Nightly, with the parcel roll',
-      provenance: camaUrl,
-      artifactPrefix: 'publish/parcels/',
-      notes:
-        'Roof age derives from max_effective_year_blt across a parcel\u2019s buildings, so it is null for parcels with no building.',
-    },
-    {
-      id: 'cama-sales',
-      label: 'SCPA CAMA extract — sales and tax history',
-      category: 'property',
-      status: current === null ? 'not-ingested' : 'ingested',
-      records: (recordCount('AllSales.csv') ?? 0) + (recordCount('Taxes.csv') ?? 0) || null,
-      recordUnit: 'sale and tax rows',
-      collectedAt: camaCollectedAt,
-      role: 'Ownership tenure and tax burden signals',
-      cadence: 'Nightly, with the parcel roll',
-      provenance: camaUrl,
-      artifactPrefix: 'publish/parcels/',
-      notes:
-        'The snapshot carries the most recent sale plus a recorded sale count; earlier transactions stay in the staged layer.',
-    },
-    {
-      id: 'fdor-centroids',
-      label: 'FDOR statewide parcel centroid layer',
-      category: 'property',
-      status: current === null ? 'not-ingested' : 'ingested',
-      records: 179107,
-      recordUnit: 'Seminole parcels compared',
-      collectedAt: camaCollectedAt,
-      role: 'Second source: validator and backfill',
-      cadence: 'Annual, published each August (2025 assessment year)',
-      provenance:
-        'https://services9.arcgis.com/Gh9awoU677aKree0/ArcGIS/rest/services/Florida_Statewide_Parcel_Centroid_Version/FeatureServer/0',
-      artifactPrefix: 'raw/fdor/',
-      notes:
-        'Partially independent only: separate statutory submission and certification cycle, but the same appraiser authored the upstream roll.',
-    },
-    {
-      id: 'cama-ownership',
-      label: 'SCPA owner names and mailing labels',
-      category: 'ownership',
-      status: current === null ? 'not-ingested' : 'ingested',
-      records: recordCount('MailingLabels.csv'),
-      recordUnit: 'owner mailing records',
-      collectedAt: camaCollectedAt,
-      role: 'Owner identity and contact geography',
-      cadence: 'Nightly, with the parcel roll',
-      provenance: camaUrl,
+      collectedAt: countyFileAt,
+      role: 'Parcels, buildings, sales, owners, and map points',
+      cadence: 'Updated every night',
+      provenance: countyFileUrl,
       artifactPrefix: 'publish/parcels/',
       notes:
         parcelStats?.withOwnerName === null || parcelStats === null
-          ? 'Owner name and mailing city/state/ZIP carry on the parcel record; the out-of-area flag is derived from the mailing ZIP.'
-          : `${parcelStats.withOwnerName.toLocaleString('en-US')} published parcels carry an owner name. Out-of-area status is derived from the mailing ZIP.`,
+          ? 'One county file. Includes buildings, sales, tax history, owner names, and coordinates.'
+          : `One county file. ${parcelStats.withOwnerName.toLocaleString('en-US')} parcels have an owner name` +
+            (parcelStats.withCoordinates === null
+              ? '.'
+              : `; ${parcelStats.withCoordinates.toLocaleString('en-US')} have coordinates.`),
     },
     {
-      id: 'cama-coordinates',
-      label: 'SCPA parcel centroids (latitude/longitude)',
-      category: 'coordinate',
-      status: current === null ? 'not-ingested' : 'ingested',
-      records: parcelStats?.withCoordinates ?? current?.parcelCount ?? null,
-      recordUnit: 'parcels with coordinates',
-      collectedAt: camaCollectedAt,
-      role: 'Radius and pin-drop search',
-      cadence: 'Nightly, with the parcel roll',
-      provenance: camaUrl,
-      artifactPrefix: 'publish/parcels/',
+      id: 'fdor-centroids',
+      label: 'Florida statewide parcel map',
+      category: 'property',
+      status: fdor === null ? 'not-ingested' : 'ingested',
+      records: nullableNumber(fdor?.recordCount),
+      recordUnit: 'parcels',
+      collectedAt: toIso(fdor?.acquiredAt) ?? countyFileAt,
+      role: 'Second map, used to check the county file',
+      cadence: 'Published once a year',
+      provenance:
+        'https://services9.arcgis.com/Gh9awoU677aKree0/ArcGIS/rest/services/Florida_Statewide_Parcel_Centroid_Version/FeatureServer/0',
+      artifactPrefix: 'raw/fdor/',
+      notes: 'A separate state map of the same parcels, not another copy of the county file.',
+    },
+    {
+      id: 'permit-census',
+      label: 'County building permits',
+      category: 'permit',
+      status: permits === null ? 'not-ingested' : permits.status,
+      records: permits?.rows ?? null,
+      recordUnit: 'permits',
+      collectedAt: permits?.collectedAt ?? null,
+      role: 'Permit history for unincorporated county',
+      cadence: 'Checked every day',
+      provenance: 'https://scwebapp2.seminolecountyfl.gov:6443/BuildingPublicrequestportal/',
+      artifactPrefix: 'staged/permits/census/',
       notes:
-        'Shares lineage with the county GIS layer FDOR also draws on, so FDOR agreement corroborates format rather than position. Median centroid separation is 0.01 m.',
+        permits === null
+          ? 'Permit harvest has not written a summary yet.'
+          : 'Unincorporated county only. City-issued permits are not in this portal.',
+    },
+    {
+      id: 'permit-status',
+      label: 'Permit status',
+      category: 'permit',
+      status:
+        permits === null
+          ? 'not-ingested'
+          : permits.statusBatchObjects === null
+            ? 'not-ingested'
+            : 'in-progress',
+      records: null,
+      recordUnit: 'permits checked',
+      collectedAt: permits?.collectedAt ?? null,
+      role: 'Whether a permit is still open',
+      cadence: 'Still being collected',
+      provenance: 'https://semc-egov.aspgov.com/Click2GovBP/selectpermit.html',
+      artifactPrefix: 'staged/permits/status/',
+      notes: 'Looked up one application at a time. Not finished for the full history.',
+    },
+    {
+      id: 'dbpr-licences',
+      label: 'Florida contractor licences',
+      category: 'contractor',
+      status: licences === null ? 'not-ingested' : 'ingested',
+      records: nullableNumber(licences?.licenceCount),
+      recordUnit: 'licences',
+      collectedAt: toIso(licences?.generatedAt ?? licences?.sourceLastModified),
+      role: 'Licence standing for permit contractors',
+      cadence: 'Updated every week',
+      provenance: 'https://www2.myfloridalicense.com/sto/file_download/extracts/CONSTRUCTIONLICENSE_1.csv',
+      artifactPrefix: 'staged/licences/',
+      notes:
+        licences === null
+          ? 'Licence harvest has not written a pointer yet.'
+          : `${(licences.matchedContractorCount ?? 0).toLocaleString('en-US')} permit contractors matched.`,
+    },
+    {
+      id: 'bbb-ratings',
+      label: 'Better Business Bureau ratings',
+      category: 'contractor',
+      status: bbb === null ? 'not-ingested' : 'ingested',
+      records: nullableNumber(bbb?.businessCount),
+      recordUnit: 'businesses',
+      collectedAt: toIso(bbb?.generatedAt),
+      role: 'Rating on a contractor when a profile matched',
+      cadence: 'Updated every month',
+      provenance: 'https://www.bbb.org/',
+      artifactPrefix: 'staged/bbb/',
+      notes:
+        bbb === null
+          ? 'BBB harvest has not written a pointer yet.'
+          : `${(bbb.matchedContractorCount ?? 0).toLocaleString('en-US')} permit contractors matched.`,
+    },
+    {
+      id: 'overture-places',
+      label: 'Business locations',
+      category: 'business',
+      status: places === null ? 'not-ingested' : 'ingested',
+      records: nullableNumber(places?.businessLocations),
+      recordUnit: 'places',
+      collectedAt: toIso(places?.publishedAt),
+      role: 'Businesses in the county',
+      cadence: 'Updated with each map release',
+      provenance: 'https://overturemaps.org/',
+      artifactPrefix: 'publish/places/',
+      notes:
+        places === null
+          ? 'Places ingest has not published a pointer yet.'
+          : places.roofingPlaces === undefined
+            ? null
+            : `${places.roofingPlaces.toLocaleString('en-US')} roofing businesses.`,
+    },
+    {
+      id: 'sunbiz-corporate',
+      label: 'Sunbiz corporate registrations',
+      category: 'business',
+      status: 'declined',
+      records: null,
+      recordUnit: null,
+      collectedAt: null,
+      role: 'Legal entities — not used',
+      cadence: 'Not ingested',
+      provenance: 'https://dos.fl.gov/sunbiz/',
+      artifactPrefix: null,
+      notes: 'Skipped. Business records on this roll are map locations, not legal filings.',
     },
   ];
-
-  entries.push({
-    id: 'permit-census',
-    label: 'Building Public Request Portal — permit census',
-    category: 'permit',
-    status: permits === null ? 'not-ingested' : permits.status,
-    records: permits?.rows ?? null,
-    recordUnit: 'permit rows',
-    collectedAt: permits?.collectedAt ?? null,
-    role: 'Permit census by application type and month',
-    cadence: 'Daily re-query of the current and previous calendar month',
-    provenance: 'https://scwebapp2.seminolecountyfl.gov:6443/BuildingPublicrequestportal/',
-    artifactPrefix: 'staged/permits/census/',
-    notes:
-      permits === null
-        ? 'Harvest has not written a slice manifest yet. This source is being ingested by a separate phase.'
-        : `Unincorporated county only. ${permits.roofingRows === null ? 'Roofing rows not yet counted' : `${permits.roofingRows.toLocaleString('en-US')} roofing-relevant rows`} across ${permits.monthlyRows.length} month${permits.monthlyRows.length === 1 ? '' : 's'} harvested so far.`,
-  });
-
-  entries.push({
-    id: 'permit-status',
-    label: 'Click2Gov building permits — status and open duration',
-    category: 'permit',
-    status:
-      permits === null
-        ? 'not-ingested'
-        : permits.statusBatchObjects === null
-          ? 'not-ingested'
-          : 'in-progress',
-    records: null,
-    recordUnit: 'permit status records',
-    collectedAt: permits?.collectedAt ?? null,
-    role: 'Application status and open-duration signal',
-    cadence: 'Daily refresh for permits that are not yet terminal',
-    provenance: 'https://semc-egov.aspgov.com/Click2GovBP/selectpermit.html',
-    artifactPrefix: 'staged/permits/status/',
-    notes:
-      'Status arrives one application at a time: the portal silently truncates address, parcel, and name searches at 50 rows, so only application-number lookup is safe.',
-  });
-
-  return entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,12 +1059,28 @@ export async function getRunSummary(options: RunSummaryOptions = {}): Promise<Ru
 async function buildRunSummary(options: RunSummaryOptions): Promise<RunSummary> {
   const startedAt = Date.now();
 
-  const [rawPointer, rawCurrent, prefixes, permits] = await Promise.all([
-    getJson(PUBLISH_POINTER_KEY),
-    getJson(`${MANIFEST_PREFIX}current/manifest.json`),
-    listPrefixes(MANIFEST_PREFIX),
-    readPermits(),
-  ]);
+  const [rawPointer, rawCurrent, prefixes, permits, rawBbb, rawPlaces, rawLicences, rawFdor] =
+    await Promise.all([
+      getJson(PUBLISH_POINTER_KEY),
+      getJson(`${MANIFEST_PREFIX}current/manifest.json`),
+      listPrefixes(MANIFEST_PREFIX),
+      readPermits(),
+      getJson(BBB_POINTER_KEY),
+      getJson(PLACES_POINTER_KEY),
+      getJson(LICENCE_POINTER_KEY),
+      getJson(FDOR_POINTER_KEY),
+    ]);
+
+  const bbbParsed = rawBbb === null ? null : BbbPointerSchema.safeParse(rawBbb);
+  const placesParsed = rawPlaces === null ? null : PlacesPointerSchema.safeParse(rawPlaces);
+  const licencesParsed = rawLicences === null ? null : LicencePointerSchema.safeParse(rawLicences);
+  const fdorParsed = rawFdor === null ? null : FdorPointerSchema.safeParse(rawFdor);
+  const landed: LandedPointers = {
+    bbb: bbbParsed?.success === true ? bbbParsed.data : null,
+    places: placesParsed?.success === true ? placesParsed.data : null,
+    licences: licencesParsed?.success === true ? licencesParsed.data : null,
+    fdor: fdorParsed?.success === true ? fdorParsed.data : null,
+  };
 
   const pointerParsed = rawPointer === null ? null : PublishPointerSchema.safeParse(rawPointer);
   const pointer = pointerParsed?.success === true ? pointerParsed.data : null;
@@ -1066,7 +1134,7 @@ async function buildRunSummary(options: RunSummaryOptions): Promise<RunSummary> 
           },
     current,
     runs,
-    sources: buildSources(current, permits, options.parcelStats ?? null),
+    sources: buildSources(current, permits, options.parcelStats ?? null, landed),
     permits,
     reconciliation: reconciliationSource,
     ipfs,
