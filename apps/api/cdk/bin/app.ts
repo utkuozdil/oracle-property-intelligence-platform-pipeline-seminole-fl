@@ -1,7 +1,10 @@
 import { SERVICE_NAME, parseTargetEnv } from '@oracle-seminole/shared';
 import * as cdk from 'aws-cdk-lib';
 import { ApiStack } from '../lib/api-stack';
+import { BbbStack } from '../lib/bbb-stack';
 import { CoreStack } from '../lib/core-stack';
+import { LicenceStack } from '../lib/licence-stack';
+import { PermitStack } from '../lib/permit-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { WebStack } from '../lib/web-stack';
 
@@ -22,7 +25,7 @@ const tags: Record<string, string> = {
   project_name: SERVICE_NAME,
   environment: targetEnv,
   managed_by: 'cdk',
-  phase: 'phase-0',
+  phase: 'phase-1',
 };
 
 const core = new CoreStack(app, `${stackPrefix}-Core`, {
@@ -48,6 +51,42 @@ new PipelineStack(app, `${stackPrefix}-Pipeline`, {
   tags,
   targetEnv,
   alertNotifier: core.alertNotifier.handler,
+  dataBucket: core.dataBucket,
+  table: core.table,
+});
+
+new PermitStack(app, `${stackPrefix}-Permits`, {
+  description: 'Oracle Seminole permit harvest (Source A census + Source B status)',
+  env: { account, region },
+  tags,
+  targetEnv,
+  alertNotifier: core.alertNotifier.handler,
+  dataBucket: core.dataBucket,
+  table: core.table,
+});
+
+new BbbStack(app, `${stackPrefix}-Bbb`, {
+  description: 'Oracle Seminole BBB contractor-reputation harvest',
+  env: { account, region },
+  tags,
+  targetEnv,
+  alertNotifier: core.alertNotifier.handler,
+  dataBucket: core.dataBucket,
+  // On in dev too: this is the environment reviewers exercise, so the monthly refresh
+  // should actually be running rather than merely defined. One Lambda run a month.
+  scheduleEnabled: true,
+});
+
+new LicenceStack(app, `${stackPrefix}-Licences`, {
+  description: 'Oracle Seminole DBPR contractor-licence harvest',
+  env: { account, region },
+  tags,
+  targetEnv,
+  alertNotifier: core.alertNotifier.handler,
+  dataBucket: core.dataBucket,
+  // Weekly on Wednesday, timed after the source regenerates at ~10:48 UTC so a run cannot
+  // fetch the previous day's file, and clear of the nightly roll, BBB, and the Sunday permits.
+  scheduleEnabled: true,
 });
 
 new WebStack(app, `${stackPrefix}-Web`, {

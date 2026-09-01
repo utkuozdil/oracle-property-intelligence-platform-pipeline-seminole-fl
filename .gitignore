@@ -10,6 +10,17 @@ cdk.out/
 .DS_Store
 coverage/
 
+# Extracted Overture places, boundaries, and generated publish artifacts.
+.places-work/
+
+# Scratch space for `just publish-ipfs`: the downloaded snapshot, the built dataset
+# directories and the CARs. All reproducible from S3.
+.publish-work/
+
+# Local BBB harvest output: raw search HTML, staged records and the idempotency ledger.
+# Reproducible with `src/bbb/run-local.ts`; the same keys go to S3 in a deployed run.
+.bbb-work/
+
 # Python (pipeline/)
 .venv/
 __pycache__/

@@ -1,0 +1,683 @@
+# Seminole County, FL — permit source configuration
+# Derived from live probing on 2026-09-01. Every value below was observed in a
+# real response; see docs/seminole-permit-harvest-findings.md for the evidence.
+---
+county:
+  name: Seminole County
+  state: FL
+  fips: '12117'
+  timezone: America/New_York
+
+sources:
+  # ------------------------------------------------------------------
+  # SOURCE A — bulk census, queried by permit type x calendar month
+  # ------------------------------------------------------------------
+  building_public_request_portal:
+    id: source_a
+    role: bulk_census
+    transport: plain_http # NO browser automation required
+    url: https://scwebapp2.seminolecountyfl.gov:6443/BuildingPublicrequestportal/
+    stack: ASP.NET WebForms 4.0.30319 + Telerik RadGrid 2014.1.326.35 (IIS 10.0)
+    form_name: aspnetForm
+    form_action: './' # posts back to the same URL
+    method: POST
+    content_type: application/x-www-form-urlencoded
+    query_dimensions: [application_type, date_range]
+    keyed_by_parcel: false # this is why the crawl inverts
+    page_size: 50 # server default; selectable 10/20/50
+    availability:
+      down_daily_local: '23:30-07:00'
+      timezone: America/New_York
+    constraints:
+      same_calendar_month_required: true
+      validator_id: ctl00_ContentPlaceHolder7_BuildingPublicRequestPortal1_dateCompareValidator
+      validator_message: 'The dates must be in the same month.'
+    data_horizon:
+      earliest_year_with_data: 1996
+      verified_empty_years: [1990, 1993, 1994, 1995]
+    required_headers:
+      User-Agent: >-
+        Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+        (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36
+      # a default curl UA is filtered; any realistic browser UA works
+    cookies:
+      session_cookie: ASP.NET_SessionId
+      must_persist: true
+    date_formats:
+      picker_value: '%Y-%m-%d' # e.g. 2026-08-01
+      date_input: '%-m/%-d/%Y' # e.g. 8/1/2026
+      telerik_clientstate: '%Y-%m-%d-00-00-00'
+    control_prefix: 'ctl00$ContentPlaceHolder7$BuildingPublicRequestPortal1$'
+    grid_control: PermitListingForTypeRadGrid
+    grid_table_id: ctl00_ContentPlaceHolder7_BuildingPublicRequestPortal1_PermitListingForTypeRadGrid_ctl00
+    grid_columns: # positional, 15 cells per row
+      - { index: 0, name: AppNo }
+      - { index: 1, name: Description }
+      - { index: 2, name: ParcelID }
+      - { index: 3, name: PropertyAddress }
+      - { index: 4, name: CityCode }
+      - { index: 5, name: StateCode }
+      - { index: 6, name: ZipCode }
+      - { index: 7, name: PropertySubdivision }
+      - { index: 8, name: StructureSequence }
+      - { index: 9, name: PermitTypeSequence }
+      - { index: 10, name: IssueDate }
+      - { index: 11, name: PermitType }
+      - { index: 12, name: OwnerName }
+      - { index: 13, name: ContractorName }
+      - { index: 14, name: ValuationAmount }
+    row_identity:
+      # AppNo alone is NOT unique: one application can yield several rows
+      # (multiple structures / permit-type sequences). Use the composite key.
+      composite_key: [AppNo, StructureSequence, PermitTypeSequence]
+    response_states: # how to classify every POST response
+      rejected: 'grid table absent + dateCompareValidator text -> query invalid, retry'
+      empty: 'tr.rgNoRecords present -> genuinely zero records'
+      single_page: 'rows present, .rgInfoPart absent -> total == row count, 1 page'
+      paged: 'rows present, .rgInfoPart present -> "N items in M pages"'
+    pagination:
+      mode: aspnet_postback
+      technique: >-
+        Scrape the submit input with class 'rgPageNext' from the current response and
+        post its name back with any value. Do not hardcode the ctlNN index: it shifts
+        with the number of numeric page links rendered.
+    optimization:
+      viewstate_reuse: true
+      note: >-
+        One initial GET is enough. Each search response carries a fresh viewstate that
+        can be reused for the next search, so N searches cost 1 GET + N POSTs.
+
+  # ------------------------------------------------------------------
+  # SOURCE B — permit status and open duration
+  # ------------------------------------------------------------------
+  click2gov_building_permit:
+    id: source_b
+    role: status_and_open_duration
+    transport: plain_http # NO browser automation required
+    url: https://semc-egov.aspgov.com/Click2GovBP/selectpermit.html
+    root: https://semc-egov.aspgov.com/Click2GovBP/
+    stack: Click2Gov (Java servlet, JSESSIONID) behind F5 BIG-IP ASM
+    waf:
+      vendor: F5 BIG-IP ASM
+      cookie_prefixes: [TS015cebb1, TS012aa550, TS7f527e98027]
+      blocking_observed: false
+    auth_requirements: # all verified NOT required
+      cookies_required: false
+      csrf_token_required: false
+      referer_required: false
+      browser_user_agent_required: false
+      note: >-
+        A single stateless POST with no cookies, no OWASP_CSRFTOKEN and no Referer
+        returns the full Status Detail page. Session continuity IS required for the
+        tab sub-views (inspections, fees, plan tracking), which read the selected
+        permit from server-side session state.
+    search_methods:
+      - id: 0
+        name: application_number
+        recommended: true
+        capped: false
+        joins_to: source_a.AppNo
+        view_field: { validatePermitView: 'true' }
+        submit_field: finish
+        fields: ['permit.appYear', 'permit.appNumber']
+        returns: Status Detail page directly (one request, no intermediate result list)
+      - id: 1
+        name: address
+        recommended: false
+        capped: true
+        cap: 50
+        view_field: { searchResultsView: 'true' }
+        submit_field: target1
+        fields:
+          [
+            'parcel.streetNumber',
+            'parcel.streetName',
+            'parcel.streetDirection',
+            'parcel.streetSuffix',
+            'streetSearchType',
+          ]
+        street_search_type: [begins, contains]
+      - id: 2
+        name: parcel_number
+        recommended: true
+        capped: true
+        cap: 50
+        view_field: { searchResultsView: 'true' }
+        submit_field: target1
+        fields:
+          [
+            'parcel.parcelNumber1',
+            'parcel.parcelNumber2',
+            'parcel.parcelNumber3',
+            'parcel.parcelNumber4',
+            'parcel.parcelNumber5',
+            'parcel.parcelNumber6',
+          ]
+        parcel_id_split: >-
+          Source A ParcelID 15-21-30-509-0000-0380 maps segment-wise onto
+          parcelNumber1..6 (Section, Township, Range, Subdivision, Block, Lot).
+        returns: every permit on the parcel with its Application Status
+      - id: 3
+        name: owner_or_contractor_name
+        recommended: false
+        capped: true
+        cap: 50
+        view_field: { searchResultsView: 'true' }
+        submit_field: target1
+        fields: [searchName, searchNameSearchType]
+        search_name_type: { C: contains, B: begins }
+    result_cap:
+      rows: 50
+      silent: true
+      warning_text_present: false
+      note: >-
+        Searches 1/2/3 truncate at exactly 50 rows with no notice and no pagination
+        (the results table is a client-side DataTables widget over whatever HTML
+        the server returned). Never use address or name search for enumeration.
+    sub_views: # GET, require session continuity after a select
+      status_detail: 'permitinfo.html?statusDetailView=true'
+      permit: 'permitinfo.html?permitStatusView=true'
+      plan_tracking: 'permitinfo.html?planTrackStatusView=true'
+      inspections: 'selectinsp.html?projectInspView=true'
+      fees: 'collectfees.html?viewAppFees=true'
+    detail_fields:
+      - Parcel ID
+      - Address
+      - Application Date
+      - Owner
+      - Application Number
+      - Application Type
+      - Valuation
+      - Square Footage
+      - Tenant Name
+      - Application (status)
+      - Tenant Unit Number
+      - General Contractor
+      - Zoning Description
+    open_duration:
+      start: Application Date (Status Detail)
+      end_when_closed: >-
+        Result Date of the terminal inspection (e.g. 'FINAL ROOF') from the
+        inspections sub-view. There is no explicit close/completion date field.
+      end_when_open: now()
+      requires_inspections_view_for_closed: true
+
+  # ------------------------------------------------------------------
+  # Related endpoint noticed but not required by this design
+  # ------------------------------------------------------------------
+  building_permit_web_inquiry:
+    id: source_c
+    role: unevaluated_alternate
+    url: https://scccap01.seminolecountyfl.gov/buildingpermitwebinquiry/
+    note: Linked from Click2Gov. Not probed; recorded only for completeness.
+
+# ----------------------------------------------------------------------
+# Join between the two sources
+# ----------------------------------------------------------------------
+join:
+  key: application_number
+  source_a_format: '26-12426' # AppNo column, year-number
+  source_b_inputs:
+    permit.appYear: '26' # 2-digit, maxlength 2
+    permit.appNumber: '12426' # maxlength 8; zero-padding optional
+  source_b_result_format: '26-00012426' # zero-padded to 8 in result lists
+  parse: "AppNo.split('-') -> [appYear, appNumber]"
+  verified_example:
+    source_a:
+      {
+        AppNo: '26-12426',
+        ParcelID: '15-21-30-509-0000-0380',
+        PropertyAddress: '103 GULL CT',
+        ContractorName: 'ERIE CONSTRUCTION MID-WEST(CCC',
+      }
+    source_b:
+      {
+        status: 'ON HOLD',
+        application_date: '08/26/26',
+        valuation: '$33,729',
+        zoning: 'PLANNED UNIT DEVELOPMENT',
+      }
+
+# ----------------------------------------------------------------------
+# Cadence
+# ----------------------------------------------------------------------
+cadence:
+  source_a_backfill: one_off_sweep_by_type_and_month
+  source_a_incremental: daily # re-query the current + previous calendar month
+  source_b_incremental: daily # refresh status for permits not yet terminal
+  avoid_window_local: '23:30-07:00' # Source A is down; America/New_York
+
+# ----------------------------------------------------------------------
+# Application status vocabulary (Source B) -> canonical mapping
+# ----------------------------------------------------------------------
+permit_status_mapping:
+  # 'observed' = number of times seen in the sampled Click2Gov responses.
+  # This list is an observed sample, not a documented enumeration; treat
+  # unknown values as 'unmapped' and alert rather than silently bucketing.
+  'IN APPROVAL':
+    canonical: pre_issuance
+    lifecycle: open
+    terminal: false
+    sort_order: 10
+    counts_toward_open_duration: true
+    observed: 1
+  'ON HOLD':
+    canonical: blocked
+    lifecycle: open
+    terminal: false
+    sort_order: 20
+    counts_toward_open_duration: true
+    observed: 1
+  'PERMIT ISSUED':
+    canonical: active
+    lifecycle: open
+    terminal: false
+    sort_order: 30
+    counts_toward_open_duration: true
+    observed: 5
+  'PERMIT COMPLETE':
+    canonical: complete
+    lifecycle: closed
+    terminal: true
+    sort_order: 90
+    counts_toward_open_duration: false
+    observed: 38
+  'CERTIFICATE OF COMPLETION':
+    canonical: complete
+    lifecycle: closed
+    terminal: true
+    sort_order: 95
+    counts_toward_open_duration: false
+    observed: 1
+  'CLOSED':
+    canonical: closed
+    lifecycle: closed
+    terminal: true
+    sort_order: 99
+    counts_toward_open_duration: false
+    observed: 11
+  'VOIDED':
+    canonical: void
+    lifecycle: void
+    terminal: true
+    sort_order: 0
+    counts_toward_open_duration: false
+    observed: 7
+  _unmapped:
+    canonical: unknown
+    lifecycle: unknown
+    terminal: false
+    action: alert_and_quarantine
+
+# ----------------------------------------------------------------------
+# Application type vocabulary (Source A dropdown) — 109 options
+# 'ALL' is the default selection and returns every type.
+# ----------------------------------------------------------------------
+application_types:
+  - code: 'F520'
+    label: 'ABOVE GROUND FUEL TANK INSTALLATION'
+    roofing_relevant: false
+  - code: 'C986'
+    label: 'ACCESS CONTROL (GATES OR DOORS)'
+    roofing_relevant: false
+  - code: 'R106'
+    label: 'ACCESSORY DWELLING UNIT'
+    roofing_relevant: false
+  - code: 'A318'
+    label: 'ACCESSORY STRUCTURE RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'C439'
+    label: 'ADDITION TO COMMERCIAL STRUCTURE'
+    roofing_relevant: false
+  - code: 'H103'
+    label: 'AFFORDABLE HOUSING 2 FAMILY DUPLEX'
+    roofing_relevant: false
+  - code: 'H104'
+    label: 'AFFORDABLE HOUSING 3 & 4 FAMILY BLDG'
+    roofing_relevant: false
+  - code: 'H105'
+    label: 'AFFORDABLE HOUSING 5 OR MORE FAMILY BLDG'
+    roofing_relevant: false
+  - code: 'H102'
+    label: 'AFFORDABLE HOUSING SINGLE FAMILY ATTACHED'
+    roofing_relevant: false
+  - code: 'H101'
+    label: 'AFFORDABLE HOUSING SINGLE FAMILY DETACHED'
+    roofing_relevant: false
+  - code: 'C437'
+    label: 'ALTERATION COMMERCIAL'
+    roofing_relevant: false
+  - code: 'C318'
+    label: 'AMUSEMENT-SOCIAL OR RECREATION'
+    roofing_relevant: false
+  - code: 'R105'
+    label: 'APARTMENT 5 OR MORE FAMILY BLDG'
+    roofing_relevant: false
+  - code: 'A956'
+    label: 'BUILDING MOVING'
+    roofing_relevant: false
+  - code: 'C951'
+    label: 'CELL TOWER'
+    roofing_relevant: false
+  - code: 'A960'
+    label: 'CHRISTMAS TREE LOT/HAUNTED HSE'
+    roofing_relevant: false
+  - code: 'C319'
+    label: 'CHURCHES OR RELIGIOUS BLDGS'
+    roofing_relevant: false
+  - code: 'C300'
+    label: 'CONDO SHELL'
+    roofing_relevant: false
+  - code: 'C306'
+    label: 'CONDO UNIT'
+    roofing_relevant: false
+  - code: 'C991'
+    label: 'CONSTRUCTION TRAILER'
+    roofing_relevant: false
+  - code: 'C649'
+    label: 'DEMO COMMERCIAL BLDGS/STRUCTURES'
+    roofing_relevant: false
+  - code: 'A649'
+    label: 'DEMO COMMERCIAL PARTIAL'
+    roofing_relevant: false
+  - code: 'R645'
+    label: 'DEMO RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'A317'
+    label: 'DOCK - BOATHOUSE'
+    roofing_relevant: false
+  - code: 'R103'
+    label: 'DUPLEX TWO FAMILY BLDG'
+    roofing_relevant: false
+  - code: 'A973'
+    label: 'ELECTRIC - GENERATOR'
+    roofing_relevant: false
+  - code: 'A980'
+    label: 'ELECTRIC SOLAR WIRING'
+    roofing_relevant: false
+  - code: 'C952'
+    label: 'ELECTRIC-SMALL WIRELESS FACILITY (5G)'
+    roofing_relevant: false
+  - code: 'C976'
+    label: 'ELECTRICAL - COMMERCIAL'
+    roofing_relevant: false
+  - code: 'A972'
+    label: 'ELECTRICAL - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'EZEL'
+    label: 'EZ ELECTRICAL - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'EZME'
+    label: 'EZ MECHANICAL - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'EZPL'
+    label: 'EZ PLUMBING - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'EZRO'
+    label: 'EZ REROOF RESIDENTIAL'
+    roofing_relevant: true
+  - code: 'EZWI'
+    label: 'EZ WINDOW / DOOR REPLACEMENT RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'C996'
+    label: 'FENCE/WALL COMMERCIAL'
+    roofing_relevant: false
+  - code: 'A996'
+    label: 'FENCE/WALL RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'F522'
+    label: 'FIRE ALARM SYSTEM INSTALLATION'
+    roofing_relevant: false
+  - code: 'F525'
+    label: 'FIRE SPRINKLER SYSTEM INSTALLATION'
+    roofing_relevant: false
+  - code: 'F521'
+    label: 'FIRE SUPPRESSION SYSTEM'
+    roofing_relevant: false
+  - code: 'A450'
+    label: 'FLOOD ZONE DETERMINATION'
+    roofing_relevant: false
+  - code: 'F529'
+    label: 'FUEL TANK CLOSURE/DEMO'
+    roofing_relevant: false
+  - code: 'C978'
+    label: 'GAS - COMMERCIAL'
+    roofing_relevant: false
+  - code: 'A969'
+    label: 'GAS - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'A900'
+    label: 'GUEST UNIT / COTTAGE'
+    roofing_relevant: false
+  - code: 'C323'
+    label: 'HOSPITALS OR INSTITUTIONAL BLDGS'
+    roofing_relevant: false
+  - code: 'C213'
+    label: 'HOTELS MOTELS TOURIST CABINS'
+    roofing_relevant: false
+  - code: 'C202'
+    label: 'HURRICANE / COMM REROOF'
+    roofing_relevant: true
+  - code: 'C203'
+    label: 'HURRICANE / COMM STRUCTURAL'
+    roofing_relevant: false
+  - code: 'R200'
+    label: 'HURRICANE / RES REROOF'
+    roofing_relevant: true
+  - code: 'R204'
+    label: 'HURRICANE / RES STRUCTURAL'
+    roofing_relevant: false
+  - code: 'C320'
+    label: 'INDUSTRIAL BUILDINGS'
+    roofing_relevant: false
+  - code: 'C977'
+    label: 'MECHANICAL - COMMERCIAL'
+    roofing_relevant: false
+  - code: 'A971'
+    label: 'MECHANICAL - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'C999'
+    label: 'MISC BUILDING - COMMERCIAL'
+    roofing_relevant: false
+  - code: 'A999'
+    label: 'MISC BUILDING - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'R112'
+    label: 'MOBILE HOME'
+    roofing_relevant: false
+  - code: 'R108'
+    label: 'MODEL HOME WITH SALES OFFICE'
+    roofing_relevant: false
+  - code: 'F524'
+    label: 'MOVE UNDERGROUND GAS LINE-PUMP'
+    roofing_relevant: false
+  - code: 'C324'
+    label: 'OFFICE/BANKS/PROFESS BLDGS'
+    roofing_relevant: false
+  - code: 'F526'
+    label: 'OIL TANK INSTALLATION +550 GAL'
+    roofing_relevant: false
+  - code: 'C328'
+    label: 'OTHER BUILDING COMMERCIAL'
+    roofing_relevant: false
+  - code: 'C321'
+    label: 'PARKING GARAGES-OPEN TO PUBLIC'
+    roofing_relevant: false
+  - code: 'C975'
+    label: 'PLUMBING - COMMERCIAL'
+    roofing_relevant: false
+  - code: 'A970'
+    label: 'PLUMBING - RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'A329'
+    label: 'POOL ENCLOSURE/BOND'
+    roofing_relevant: false
+  - code: 'C325'
+    label: 'PUBLIC WORKS OR UTILITIES BLDGS'
+    roofing_relevant: false
+  - code: 'F533'
+    label: 'PYROTECHNICS FLAME DISPLAY'
+    roofing_relevant: false
+  - code: 'F532'
+    label: 'RADIO ENHANCEMENT SYSTEM'
+    roofing_relevant: false
+  - code: 'C966'
+    label: 'RANGE HOOD'
+    roofing_relevant: false
+  - code: 'R300'
+    label: 'REROOF - SOLAR PV SHINGLES'
+    roofing_relevant: true
+  - code: 'C110'
+    label: 'REROOF COMMERCIAL'
+    roofing_relevant: true
+  - code: 'R100'
+    label: 'REROOF RESIDENTIAL'
+    roofing_relevant: true
+  - code: 'R435'
+    label: 'RES ADDITION TO EXISTING STRUCTURE'
+    roofing_relevant: false
+  - code: 'R434'
+    label: 'RES ALTERATIONS, NO CHANGE IN UNITS'
+    roofing_relevant: false
+  - code: 'R438'
+    label: 'RES GARAGE & CARPORTS'
+    roofing_relevant: false
+  - code: 'C326'
+    label: 'SCHOOLS OR EDUCATIONAL BLDGS'
+    roofing_relevant: false
+  - code: 'A330'
+    label: 'SCREEN ROOM'
+    roofing_relevant: false
+  - code: 'A328'
+    label: 'SHED/BARN RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'C302'
+    label: 'SHELL COMMERCIAL'
+    roofing_relevant: false
+  - code: 'C214'
+    label: 'SHELTER (BOARDING HOUSE, DORMITORIES)'
+    roofing_relevant: false
+  - code: 'A998'
+    label: 'SIDING / ROOF OVER'
+    roofing_relevant: true
+  - code: 'C998'
+    label: 'SIDING/AWNINGS/AL ROOF/CANOPY COMMERCIAL'
+    roofing_relevant: true
+  - code: 'C994'
+    label: 'SIGN (POLE,WALL,FACIA)'
+    roofing_relevant: false
+  - code: 'R101'
+    label: 'SINGLE FAMILY DETACHED'
+    roofing_relevant: false
+  - code: 'C982'
+    label: 'SITE LIGHTING'
+    roofing_relevant: false
+  - code: 'A978'
+    label: 'SOLAR ESS - COMM'
+    roofing_relevant: false
+  - code: 'A979'
+    label: 'SOLAR-POOL/WTR HTR SPLY'
+    roofing_relevant: false
+  - code: 'F531'
+    label: 'SPARKLER SALES'
+    roofing_relevant: false
+  - code: 'C322'
+    label: 'SRVC STATIONS/REPAIR GARAGES'
+    roofing_relevant: false
+  - code: 'C327'
+    label: 'STORES OR MERCANTILE BUILDINGS'
+    roofing_relevant: false
+  - code: 'C329'
+    label: 'STRUCTURES OTHER THAN BUILDINGS'
+    roofing_relevant: false
+  - code: 'C333'
+    label: 'SWIMMING POOL COMMERCIAL'
+    roofing_relevant: false
+  - code: 'R329'
+    label: 'SWIMMING POOL RESIDENTIAL'
+    roofing_relevant: false
+  - code: 'A984'
+    label: 'TEMPORARY POWER POLE'
+    roofing_relevant: false
+  - code: 'C980'
+    label: 'TEMPORARY SALES OFFICE'
+    roofing_relevant: false
+  - code: 'A993'
+    label: 'TEMPORARY TENT'
+    roofing_relevant: false
+  - code: 'C801'
+    label: 'TORNADO DAMAGE / COMMERCIAL'
+    roofing_relevant: false
+  - code: 'R800'
+    label: 'TORNADO DAMAGE / RESIDENTIAL'
+    roofing_relevant: true
+  - code: 'R102'
+    label: 'TOWNHOME SINGLE FAMILY ATTACHED'
+    roofing_relevant: false
+  - code: 'R104'
+    label: 'TRIPLEX & QUADPLEX 3 OR 4 FAMILY BLDG'
+    roofing_relevant: false
+  - code: 'F523'
+    label: 'UNDERGROUND FIRE MAIN INSTALLATION'
+    roofing_relevant: false
+  - code: 'F527'
+    label: 'UNDERGROUND FUEL TANK INSTALLATION'
+    roofing_relevant: false
+  - code: 'R955'
+    label: 'UP TO CODE/FIRE DMG REPAIR'
+    roofing_relevant: false
+  - code: 'C981'
+    label: 'WALK / REACH - IN COOLER COMMERCIAL'
+    roofing_relevant: false
+  - code: 'F530'
+    label: 'WATER TANK FOR FIRE PROTECTION'
+    roofing_relevant: false
+  - code: 'A997'
+    label: 'WINDOW / DOOR REPLACEMENT'
+    roofing_relevant: false
+  - code: 'A986'
+    label: 'WOOD DECK'
+    roofing_relevant: false
+  - code: 'ALL'
+    label: 'ALL TYPES'
+    roofing_relevant: false
+
+roofing_type_codes:
+  # the subset to sweep for roof-replacement lead generation
+  - 'EZRO' # EZ REROOF RESIDENTIAL
+  - 'C202' # HURRICANE / COMM REROOF
+  - 'R200' # HURRICANE / RES REROOF
+  - 'R300' # REROOF - SOLAR PV SHINGLES
+  - 'C110' # REROOF COMMERCIAL
+  - 'R100' # REROOF RESIDENTIAL
+  - 'A998' # SIDING / ROOF OVER
+  - 'C998' # SIDING/AWNINGS/AL ROOF/CANOPY COMMERCIAL
+  - 'R800' # TORNADO DAMAGE / RESIDENTIAL
+
+roofing_vocabulary_notes: >-
+  The active vocabulary changes over time: EZRO ('EZ REROOF RESIDENTIAL') returned 0
+  rows for 2026-08 but 211 rows for 2022-10, and C202/R200 (hurricane reroof) are
+  event-driven. A historical sweep must iterate every roofing code across the whole
+  period rather than only the codes that are active today.
+
+# ----------------------------------------------------------------------
+# Secondary permit-type codes seen in the Source A PermitType column.
+# These are a DIFFERENT vocabulary from the application-type dropdown.
+# ----------------------------------------------------------------------
+observed_permit_type_codes:
+  - 'RR REROOF' # observed 142
+  - 'BPS1 BLDG PMT OTHERS STRUCTURES' # observed 10
+  - 'MEC2 MECHANICAL ALL OTHER' # observed 9
+  - 'PSFO FP FIRE OTHER CONSTRUCTION' # observed 4
+  - 'PLMS PLUMBING MISCELLANEOUS' # observed 4
+  - 'ELMS ELECTRIC MISCELLANEOUS' # observed 3
+  - 'ESOL ELECTRIC SOLAR' # observed 3
+  - 'BPNA BLDG PMT NEW / ALTERATION R' # observed 1
+  - 'GAS1 GAS PERMIT - ALL TYPES' # observed 1
+  - 'ELE1 ELECTRICAL SFR-NEW CONST' # observed 1
+  - 'MEC1 MECHANICAL SFR-NEW CONST' # observed 1
+  - 'PLB1 PLUMBING SFR-NEW CONST' # observed 1
+  - 'BPRF BLDG PERMIT/ROOF' # observed 1
+  - 'PE POOL ENCLOSURES' # observed 1
+  - 'BPC BLDG PMT COMMERCIAL' # observed 1
+  - 'BPFN BUILDING PERMIT FENCE/WALL' # observed 1

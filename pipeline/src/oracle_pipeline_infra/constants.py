@@ -3,18 +3,32 @@
 These duplicate `packages/shared/src/service.ts`. They are kept in sync by hand because
 the two CDK apps are separate runtimes; the tests assert the SSM parameter paths so a
 drift is caught rather than silently deploying against the wrong parameter.
+
+Within Python there is no duplication: the scalars are re-exported from
+`oracle_pipeline.constants`, which is the package the Glue runtime actually receives.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from oracle_pipeline.constants import (
+    AWS_REGION,
+    COUNTY,
+    METRICS_NAMESPACE,
+    SERVICE_NAME,
+    TargetEnv,
+)
 
-SERVICE_NAME = "oracle-seminole"
-METRICS_NAMESPACE = "OracleSeminole"
-AWS_REGION = "us-east-2"
-COUNTY = "Seminole County, FL"
-
-TargetEnv = Literal["dev", "prod"]
+__all__ = [
+    "AWS_REGION",
+    "COUNTY",
+    "METRICS_NAMESPACE",
+    "SERVICE_NAME",
+    "TargetEnv",
+    "cost_tags",
+    "operations_topic_name",
+    "parse_target_env",
+    "ssm_parameter_names",
+]
 
 
 def parse_target_env(value: str | None) -> TargetEnv:
@@ -46,5 +60,5 @@ def cost_tags(target_env: TargetEnv) -> dict[str, str]:
         "project_name": SERVICE_NAME,
         "environment": target_env,
         "managed_by": "cdk",
-        "phase": "phase-0",
+        "phase": "phase-1",
     }

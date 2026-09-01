@@ -1,6 +1,8 @@
 import {
   DATA_PREFIXES,
   METRICS_NAMESPACE,
+  RAW_ARCHIVE_PREFIX,
+  RAW_EXPANDED_PREFIX,
   operationsTopicName,
   SERVICE_NAME,
   ssmParameterNames,
@@ -56,6 +58,63 @@ export class CoreStack extends cdk.Stack {
       versioned: false,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      lifecycleRules: [
+        {
+          /**
+           * The CSVs expanded out of each nightly archive.
+           *
+           * 640 MB per run against the 95 MB archive they came from, and entirely
+           * reproducible from it — the Glue job re-expands the archive on every run
+           * regardless. Keeping them is paying seven times over to store a cache.
+           *
+           * Seven days rather than one: long enough to debug a bad run against the exact
+           * CSVs it read, which is the only reason to want them at all, and short enough
+           * that a month of nightlies cannot accumulate 19 GB.
+           *
+           * Deliberately scoped away from `raw/archive/`, which holds the provenance
+           * record, and from `manifests/`, which is the run history.
+           */
+          id: 'ExpireExpandedCsvs',
+          enabled: true,
+          prefix: RAW_EXPANDED_PREFIX,
+          expiration: cdk.Duration.days(7),
+        },
+        {
+          /**
+           * The nightly CAMA archives themselves.
+           *
+           * These are the provenance record — the exact bytes the county served — and
+           * nothing expired them, so they accumulated at ~95 MB a night: ~34 GB and
+           * ~$0.80/month after a year, growing without bound.
+           *
+           * 180 days rather than 7, because unlike the expanded CSVs these are not
+           * derivable from anything. Half a year keeps every archive behind the last two
+           * quarterly reviews, which is the window in which anyone actually re-reads one:
+           * to prove what a published snapshot was built from, or to re-run a transform
+           * change against a specific night's bytes. Past that, the run manifest's
+           * `sourceFingerprint` still records the archive's SHA-256, so provenance
+           * survives the archive.
+           *
+           * Scoped to `raw/archive/` alone. `raw/expanded/` has its own 7-day rule above,
+           * and `raw/fdor/` must never be reached by either — the FDOR snapshot is
+           * republished annually and a 180-day expiry would delete the live second source
+           * six months before its replacement exists.
+           */
+          id: 'ExpireRawArchives',
+          enabled: true,
+          prefix: RAW_ARCHIVE_PREFIX,
+          expiration: cdk.Duration.days(180),
+        },
+        {
+          /**
+           * The archive upload is multipart, so an interrupted acquire leaves parts that
+           * are billed but invisible to a listing. Nothing else reclaims them.
+           */
+          id: 'AbortIncompleteUploads',
+          enabled: true,
+          abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+        },
+      ],
     });
 
     /**

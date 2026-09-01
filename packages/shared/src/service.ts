@@ -42,6 +42,19 @@ export function operationsTopicName(targetEnv: TargetEnv): string {
 }
 
 /**
+ * Physical name of the Seminole refresh Glue job, which the Python CDK app owns.
+ *
+ * Derived rather than imported for the same reason {@link operationsTopicName} is: the
+ * state machine has to reference a resource in the other CDK app, and a CloudFormation
+ * export would make the Glue stack undeployable without the serving stack's consent.
+ *
+ * Mirrored by the `job_name` expression in `oracle_pipeline_infra/glue_stack.py`.
+ */
+export function glueJobName(targetEnv: TargetEnv): string {
+  return `${SERVICE_NAME}-${targetEnv}-seminole-refresh`;
+}
+
+/**
  * SSM parameter paths. These are the seam between the two CDK apps: the TypeScript app
  * owns the shared resources and publishes their identifiers here, and the Python CDK
  * app that owns the Glue tier reads them at deploy time.

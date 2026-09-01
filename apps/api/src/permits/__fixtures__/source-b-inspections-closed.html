@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<html lang="en">
+   <head>
+      <title>Click2Gov Building Permit - Project Inspection</title>
+      
+
+
+
+<meta charset="utf-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="format-detection" content="telephone=no"/>
+<meta name="author" content="Citizen Engagement Portal, CentralSquare" />
+<meta name="copyright" content="1999 - 2017 Citizen Engagement Portal, CentralSquare" />
+<link rel="shortcut icon" href="user_files/favicon.ico?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+
+
+<link rel="stylesheet" media="all" href="style/jquery/jquery-ui.min.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="style/jquery/jquery.alerts.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="style/bootstrap/glyphicons.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="style/bootstrap/glyphicons-social.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+
+<link rel="stylesheet" media="all" href="style/bootstrap.min.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="style/datatables.min.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="style/pikaday.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+
+<link rel="stylesheet" media="all" href="style/egov.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="style/egov.theme.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+
+<link rel="stylesheet" media="all" href="style/app.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="user_files/style-user.theme.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="all" href="user_files/style-userV3.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="print" href="style/printV2.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+<link rel="stylesheet" media="print" href="user_files/style-user-printV3.css?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" />
+
+
+
+<!--[if lt IE 9]>
+   <link rel="stylesheet" media="all" href="style/ie.css" />
+<![endif]-->
+<noscript>
+   <meta http-equiv="Refresh" content="0;url=environmentWarning.jsp" />
+</noscript>
+<!--[if lt IE 9]>
+   <script type="text/javascript" src="/Click2GovBP/scripts/html5shiv.min.js"></script>
+   <script type="text/javascript" src="/Click2GovBP/scripts/respond.min.js"></script>
+<![endif]-->
+
+<script src="https://apis.google.com/js/platform.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" async defer></script>
+<meta name="google-signin-client_id" content=".apps.googleusercontent.com">
+
+   </head>
+   <body>
+      
+
+
+
+
+
+
+<script type="text/javascript" src="scripts/jquery/jquery.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript">
+   var jq = jQuery.noConflict();
+</script>
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+  <div id="editPage"></div>
+  <div id="page" class="container">
+    <div class="row" role="banner">
+      <div class="navbar fixed-top navbar-dark d-flex d-md-none">
+   <button class="navbar-toggler" type="button" data-toggle="offcanvas">
+      <span class="sr-only">Toggle application navigation</span>
+      <span class="navbar-toggler-icon"></span>
+   </button>
+   <span class="navbar-brand">
+      Click2GovBP
+   </span>
+</div>
+<div id="banner" class="col-12 d-none d-md-block">
+   <a href="http://www.seminolecountyfl.gov/?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" target="_blank" class="c2gHotspot"  alt="City Web Site"></a>
+
+   <div id="accessibility-header" class="is-hidden banner-link">
+      
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Click2GovBP</span>
+   </div>
+   
+      <div id="c2g-navbar" class="banner-link d-none d-md-block">
+         <!-- TODOQPSF - add active class when on associated page -->
+
+      </div>
+   
+</div>
+    </div>
+    
+    
+      
+        <div class="row">
+          
+          <div id="menu" class="col-6 col-md-3 navbar-default">
+   <div id="menuWrapper" class="nav nav-pills list-group">
+      <a id="mobileMenuLogo" class="list-group-item visible-xs-block"></a>
+      
+         
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="https://scccap01.seminolecountyfl.gov/buildingpermitwebinquiry/?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" class="list-group-item "  title="" aria-label="" role=""  target="_blank"   > Pay Fees</a>
+
+      
+      
+      
+      
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+
+
+   
+      
+   
+   
+
+
+      
+         
+         
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="index.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" class="list-group-item "  title="" aria-label="" role=""   > Home</a>
+
+         
+      
+      
+      
+      
+         
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+         
+            
+            
+               
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="selectpermit.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&initialSearchView=true" class="list-group-item "  title="" aria-label="" role=""   > Select Permit</a>
+
+            
+         
+      
+      
+         
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+            
+               
+               
+                  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="permitinfo.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&statusDetailView=true" class="list-group-item "  title="" aria-label="" role=""   > Detail</a>
+
+               
+            
+         
+         
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+            
+               
+               
+                  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="collectfees.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&viewAppFees=true" class="list-group-item "  title="" aria-label="" role=""   > Fees</a>
+
+               
+            
+         
+         
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+            
+               
+               
+                  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="permitinfo.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&permitStatusView=true" class="list-group-item "  title="" aria-label="" role=""   > Permit</a>
+
+               
+            
+         
+         
+         
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+            
+               
+               
+                  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="permitinfo.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&planTrackStatusView=true" class="list-group-item "  title="" aria-label="" role=""   > Plan Tracking</a>
+
+               
+            
+         
+         
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+            
+               
+                  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="selectinsp.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&projectInspView=true" class="list-group-item active "  title="" aria-label="" role=""   > Inspections</a>
+
+               
+               
+            
+         
+         
+      
+      
+         
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+         
+            
+            
+               
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="permitinfo.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS&schdInspView=true" class="list-group-item "  title="Schedule or Cancel Inspection" aria-label="Schedule or Cancel Inspection" role=""   > Schedule or Cancel Inspection</a>
+
+            
+         
+      
+ 
+      
+      
+         
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+
+
+   
+      
+   
+   
+
+
+         
+            
+            
+               
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="submit-app-flow.html?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" class="list-group-item "  title="" aria-label="" role=""   > Request Application Number</a>
+
+            
+         
+      
+      
+         
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="https://eplan.seminolecountyfl.gov/epr?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS" class=" "  title="" aria-label="" role=""  target="_new"   > </a>
+
+      
+      <!-- TODOQPSF - add active class when on associated page -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+      
+      
+   
+
+   
+
+   
+
+
+
+   
+      
+   
+   
+
+
+
+
+<span class="d-block d-md-none">
+  
+
+  
+</span>
+      
+      
+         
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+      
+      
+      <!-- only in edit mode if there is a key -->
+      
+   
+   
+
+<a  href="mailto:bpcustomerservice@seminolecountyfl.gov" class="list-group-item "  title="" aria-label="" role=""  target="_blank"   > Email Us</a>
+
+      
+   </div>
+</div>
+
+          <div id="content" class="col-md-9" role="main" tabindex="-1">
+            
+            <div class="hiddenLbl"></div><!-- placeholder as some screen readers say part of content before main landmark -->
+            
+         <div id="contentPanel" class="card">
+            
+               
+               
+                  <h1 class="card-header">
+                     
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Inspections</span>
+                     for 21 - 13064
+                  </h1>
+               
+            
+            <div class="card-body">
+               
+
+
+
+
+
+
+
+  
+  
+
+  
+  
+  
+    
+  
+  
+  
+  
+    
+    
+      <p id="" class=" "   ></p>
+    
+  
+
+  
+
+               
+                  
+                     <table class="jTable table table-striped table-bordered" >
+                        
+                           
+                           
+                              <thead>
+                                 <tr>
+                                    
+                                       <th scope="col">
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Inspection Type</span></th>
+                                    
+                                    
+                                       <th scope="col">
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Scheduled Date</span></th>
+                                    
+                                    
+                                       <th scope="col">
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Status</span></th>
+                                    
+                                    
+                                       <th scope="col">
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Result Date</span></th>
+                                    
+                                    
+                                       <th scope="col">
+
+
+
+
+
+
+
+
+
+   
+   
+      
+      
+      <!-- only in edit mode if there is no body replacement text -->
+      
+   
+
+
+<span id="" class=" "  >Permit Description</span></th>
+                                    
+                                    
+                                    
+                                 </tr>
+                              </thead>
+                              <tbody>
+                                 
+                                    <tr>
+                                       
+                                          <td>ROOF IN-PROGRESS RESIDENTIAL</td>
+                                       
+                                       
+                                          
+                                             
+                                                <td class="date"> 10/21/2021</td>
+                                             
+                                             
+                                          
+                                       
+                                       
+                                          <td>APPROVED</td>
+                                       
+                                       
+                                          
+                                             
+                                                <td class="date"> 10/21/2021</td>
+                                             
+                                             
+                                          
+                                       
+                                       
+                                          <td>REROOF</td>
+                                       
+                                       
+                                       
+                                    </tr>
+                                 
+                                    <tr>
+                                       
+                                          <td>FINAL ROOF</td>
+                                       
+                                       
+                                          
+                                             
+                                                <td class="date"> 10/25/2021</td>
+                                             
+                                             
+                                          
+                                       
+                                       
+                                          <td>APPROVED</td>
+                                       
+                                       
+                                          
+                                             
+                                                <td class="date"> 10/25/2021</td>
+                                             
+                                             
+                                          
+                                       
+                                       
+                                          <td>REROOF</td>
+                                       
+                                       
+                                       
+                                    </tr>
+                                 
+                              </tbody>
+                           
+                        
+                     </table>
+                  
+                  
+               
+               
+
+
+
+
+
+
+
+  
+  
+
+  
+  
+  
+    
+  
+  
+  
+  
+    
+    
+      <p id="" class=" "   ></p>
+    
+  
+
+  
+
+            </div>
+         </div>
+      
+          </div>
+        </div>
+      
+      
+    
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+
+
+   
+      
+   
+   
+
+
+    <form id="c2gLogoff" action="logoffuser.html" method="get">
+       <input type="hidden" name="viewLogoffUser" value="true"/>
+    <INPUT type=hidden name=OWASP_CSRFTOKEN value=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS></form>          
+          
+    <div id="footer" role="contentinfo">
+      <script type="text/javascript">
+	//automatically select the "APPLICANT" and "CONTRACTOR" options in BP Request Application Number workflow
+	function selectApplicant(){
+		if (document.getElementById('userClass.code') != null){
+			document.getElementById('userClass.code').value = "AP";
+		}
+		return;
+	}
+	function selectContractor(){
+		if (jq('#contractorType').length > 0){ 
+			document.getElementById('contractorType').value = "C";
+		}
+		return;
+	}
+	function clickCheckbox(){
+		if (document.getElementById('structure.submission1')){
+			var elm = document.getElementById('structure.submission1');
+			if(elm.checked != true){
+				elm.click();
+			}
+		}
+		return;
+	}
+	jq(document).ready( function(){
+		selectApplicant();
+		selectContractor();	
+		clickCheckbox();
+		
+	});
+</script>
+
+    </div>
+  </div>
+  
+    <script type="text/javascript">
+//<![CDATA[
+
+   //validator
+   var errMessage                = 'The following issues must be addressed before this form can be submitted:';
+   var errMessageAccess          = 'Please correct the below errors on this page:';
+   var errMsgNotEmpty            = 'Must not be empty.';
+   var errRadioNotEmpty          = 'Radio must be selected.';
+   var errCheckboxNotEmpty       = 'The checkbox is required.';
+   var errMsgAlphaOnly           = 'Must contain only alphabetic characters.';
+   var errMsgAlphaSpace          = 'Must contain only alphabetic characters.';
+   var errMsgAlphaNumOnly        = 'Must contain only alphanumeric characters.';
+   var errMsgNumericOnly         = 'Must contain only numeric characters.';
+   var errMsgFloatOnly           = 'Must contain a valid monetary amount.';
+   var errMsgValidCCNum          = 'Contains an invalid credit card number.';
+   var errMsgValidRoutingNum     = 'Contains an invalid routing number.';
+   var errMsgValidEmail          = 'Contains an invalid eMail address.';
+   var errMsgValidUrl            = 'Contains an invalid URL.';
+   var errMsgMaxLength           = 'Must contain more than {0} characters.';
+   var errMsgMinLength           = 'Must contain at least {0} characters.';
+   var errMsgMaxValue            = 'Must be less than or equal to {0}.';
+   var errMsgMinValue            = 'Must be greater than or equal to {0}.';
+   var errMsgNumBetween          = 'Must contain a numeric value between {0} and {1}.';
+   var errMsgMatch               = 'Values must match.';
+   var errMsgValidZip            = 'Contains an invalid Zip Code.';
+   var errMsgAlphaPlus           = 'Must contain only letters and these characters (comma, space, period, single quotes, dash).';
+   var errMsgAlphaNumericPlus    = 'Must contain only letters, numbers and these characters (comma, space, period, single quotes, dash).';
+   var errMsgCCExpired           = 'Contains an invalid date.';
+   var errMsgCCInvalid           = 'Contains an invalid card number.';
+   var errMsgCurrency            = 'Must contain a valid currency amount.';
+   var errMsgNoNumber            = 'Must contain a number.';
+   var errMsgNoLetter            = 'Must contain a letter.';
+   var errMsgNoLowercase         = 'Must contain a lowercase letter.';
+   var errMsgNoUppercase         = 'Must contain an uppercase letter.';
+   var errMsgPasswordInvalid     = 'May only contain letters, numbers, or {sc}';
+   var errMsgEmailInvalid        = 'Invalid Email';
+   var errMsgDateInvalid         = 'Contains an invalid date.';
+   var errMsgTimeInvalid         = 'Contains an invalid time.';
+   var errMsgMaxDecimalLength    = 'Must not contain more than {0} decimal places.';
+   var errCancelNoItems          = 'You have not selected an item to cancel.';
+   var errCancelConfirm          = 'Are you sure you wish to cancel the selected item(s)?';
+   var errNoCheckboxes           = 'A checkbox must be selected.';
+   var errNoRadios               = 'A radio must be selected.';
+   
+   //additional messages
+   var errMsgFees                = 'You must select at least one fee to pay!';
+   var errDeleteConfirm          = 'Are you sure you wish to delete the selected item(s)?';
+   var errDeleteNoItems          = 'You have not selected an item to delete.';
+   var errDeleteAutoPay          = 'Unable to delete. An account selected has Autopay enabled, please remove Autopay before deleting.';
+   var errRemoveNoItems          = 'You have not selected any twitter account to remove.';
+   var errRemoveConfirm          = 'Are you sure you wish to remove the selected twitter account(s)?';
+   var errDateRangeInValid       = 'The {0} is in future compared to {1}.';
+   var errTimeRangeInValid       = 'The {0} is in future compared to {1}.';
+   
+   var errMsgLogonReq            = 'You must login before proceeding.';
+   var errMsgCheckBoxNotSelected = 'You must select agree to continue';
+   var errMsgNotContractor       = 'There are no contractors associated with this account.';
+   
+   //Error message console
+   
+   var errMsgGrooup1             = 'Please select at least one field from Group One ( Employee number/ SSN/ SSN last four/ Hire date)';
+   var errMsgGrooup2             = 'Please select at least one field from Group Two ( Employee name/ Gross pay/ Last check date/ Last check number/ Net pay)';
+   var errMsgGrooupSSN           = 'Among SSN last four and SSN, only one has to be selected';
+   var errMsgEmpSSN              = 'Employee no must have to be selected for Including SSN last four';
+   
+   //Accessibility
+   var jsAccessOff              = '???userauth.menu_btns.accessibility_off???';
+   var jsAccessOn               = '???userauth.menu_btns.accessibility_on???';
+   var jsAccessButton           = 'Continue (opens new tab)';
+   
+   //Misc text
+   var jsDeleteConfirmTitle     = 'Confirm Delete';
+   var jsDeleteConfirmText      = 'Are you sure you wish to delete the item(s) selected.';
+//]]>
+</script>
+
+
+<script src="https://apis.google.com/js/platform.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+<script type="text/javascript">
+	var showRowCnt = true;
+	
+</script>
+
+<script type='text/javascript' src="scripts/bootstrap.bundle.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/moment.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/pikaday.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/pikaday.jquery.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+<script type="text/javascript" src="scripts/jquery/jquery-ui.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/jquery/jquery.alerts.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+<script type='text/javascript' src="scripts/datatables.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+<script type="text/javascript" src="scripts/jquery/jquery.maskedinput-1.4.1.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type='text/javascript' src="scripts/validator.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+<script type='text/javascript' src="scripts/validator.extend.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/util.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/jqueryUtils.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/cookieUtils.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+<script type="text/javascript" src="scripts/Chart.min.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+
+
+
+
+
+<script type="text/javascript">
+
+jq(function()
+{
+   //if cookie exists, toggle on.  if not, toggle off.
+   toggleAccessibility(GetCookie('c2gAccessibility'));
+});
+
+function toggleAccessibility(pToggle)
+{
+   //test to turn on or off, look for hide in skip link
+   if(pToggle)
+   {
+      //turn on accessibility skip links
+      jq("#skipNav,#skipCon").removeClass("hide");
+      if(jq("#application_content").length > 0)
+      {
+         //remove application skip link for this page
+         jq("#skipApp").removeClass("hide");
+      }
+   }  
+   else
+   {
+      //add focus to first form element 
+      setFirstFocus();
+   }
+};
+
+//sets focus onto first input found. can put nofocus attribute on the form to prevent focus
+//being set on any input.
+function setFirstFocus()
+{
+   if((document.forms != null) && !jPopupShown) 
+   {
+      var lFocusSet = false;
+      
+      for(var i = 0;i < document.forms.length; i++)
+      {
+         if(document.forms[i].attributes.nofocus == null && document.forms[i].elements != null)
+         {
+            for(var j = 0;j < document.forms[i].elements.length; j++)
+            {
+               var lFormField = document.forms[i].elements[j];
+
+               if((lFormField.type != null) && !lFormField.disabled && 
+                  (lFormField.style.visibility != "hidden") &&
+                  (typeof(lFormField.focus) != "undefined") &&
+                  ((lFormField.type == "text") || (lFormField.type.indexOf("select") >= 0) ||
+                  (lFormField.type == "textarea") || (lFormField.type == "password") || 
+                  (lFormField.type == "radio") || (lFormField.type == "checkbox") || 
+                  (lFormField.type == "file") || (lFormField.type == "email")))
+               {
+                  lFormField.focus();
+                  lFocusSet = true;
+                  break;
+               }
+            }
+         }
+         if(lFocusSet)
+         {
+            break;
+         }
+      }
+   }
+};
+
+</script>
+
+
+<script type="text/javascript">
+
+
+
+   jq(".payBillLink").attr("target", "_new"); 
+
+	jq(".payBillLink").on("click", function()
+	{
+		document.location = "thirdpartypaymentreceipt.html";
+	});
+
+
+</script>
+
+
+
+
+
+
+
+
+
+
+
+   <script>
+      var b = "-----BEGIN PUBLIC KEY-----MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr9kJwcCm7zRDyUyAtHNrFj+9X8CoARRQc0GD6FEMCBYXzKiYa3kR+e11TwVzCtiA+yAR1fsXoVKEAPyy3ZBne7Gs+8Ju3aIS+iXM75ELYlOvd9sUqsMHLdNbBxL/JcVlZIoDVQy50PmfcjfN2+aUDZGKStyqLdX8+4r0PktShzviZ6SPAFHmsMY0isLLnJ+XxcdtY9rPAYD1WmyX+BMpFSgycABmxVS0s2rbm5m1JQnIcZ9d+XuMYB72ndyNX9n/WQK+xyUAklz7ETkdnoDl1mbhBIQ24JJa5Og06gyEMkqhu/wJYEc/UbU0efCeJnwJnvolmB7zj2s8mWpxvxTl8wIDAQAB-----END PUBLIC KEY-----";
+      var c = "RSA-OAEP";
+   </script>
+   <script type="text/javascript" src="scripts/util2.js?OWASP_CSRFTOKEN=UMAT-WVQ0-9GCJ-JJSA-0TCC-SWBN-EELO-2YVS"></script>
+
+
+<script>
+   //In case the browser doesn't support includes on arrays
+   if(!Array.prototype.includes)
+   {
+      Array.prototype.includes = function(pSearch)
+      {
+         var lFound = false;            
+         for(var i = 0;i < this.length; i++)
+         {
+            if(this[i].indexOf(pSearch) >= 0)
+            {
+               lFound = true;
+               break;
+            }               
+         }            
+         return lFound;
+      }
+   }      
+
+	//Copied from validator script file. Call function with jquery input field object(s) that is
+	//associated with inline validation and it will clear the errors.
+	function clearErrors($el)
+	{
+	   var $group = $el.closest('.validator-group')
+	   var $block = $group.find('.help-block.with-errors')
+	   var $feedback = $group.find('.form-control-feedback')
+	
+      $el.data("bs.validator.errors","");
+	   $block.html($block.data('bs.validator.originalContent'))
+	   $group.removeClass('has-error')
+	   if (!$block.hasClass('is-hidden'))
+	   {
+	      $block.addClass('is-hidden')
+	   }
+	
+	   $feedback.length
+	     && $feedback.removeClass('glyphicon-remove')
+	     && $feedback.addClass('glyphicon-ok')
+	     && $group.addClass('has-success')
+	}           
+	      
+   function automaticLogin()
+   {
+      
+   }
+    	
+</script>
+
+<!-- Scripts to support facebook -->
+
+
+<!-- Scripts to support google -->
+
+
+
+
+
+
+  
+   </body>
+</html>

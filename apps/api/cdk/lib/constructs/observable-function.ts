@@ -18,6 +18,8 @@ export interface ObservableFunctionProps {
   memorySize?: number;
   timeout?: cdk.Duration;
   deadLetterQueue?: sqs.IQueue;
+  /** Hard ceiling on concurrent executions, used to throttle a rate-sensitive target. */
+  reservedConcurrentExecutions?: number;
 }
 
 /**
@@ -56,6 +58,7 @@ export class ObservableFunction extends nodejs.NodejsFunction {
       architecture: lambda.Architecture.X86_64,
       memorySize: props.memorySize ?? 512,
       timeout: props.timeout ?? cdk.Duration.seconds(30),
+      reservedConcurrentExecutions: props.reservedConcurrentExecutions,
       tracing: lambda.Tracing.ACTIVE,
       deadLetterQueueEnabled: props.deadLetterQueue !== undefined,
       deadLetterQueue: props.deadLetterQueue,

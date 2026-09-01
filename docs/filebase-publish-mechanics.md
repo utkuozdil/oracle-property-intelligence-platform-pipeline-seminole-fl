@@ -1,0 +1,696 @@
+# Filebase Publish Mechanics — how we get a directory CID, and how we re-point IPNS
+
+**Question:** plain S3 uploads give every object its own CID, but a prefix full of objects is
+not a directory. We need one CID per dataset root so an IPNS name can point at it. Two candidate
+routes were on the table — (a) upload a CAR file, (b) point IPNS at an `index.json` that carries
+the shard CIDs.
+
+**Answer: route (a). CAR import works, is cheap, and is strictly better than (b) on every axis
+measured.** Route (b) is not needed and should be dropped.
+
+**But the publish layout in the brief cannot be built as written.** The free plan permits exactly
+**one IPNS name**, not three. The three-names design has to collapse into one name pointing at a
+county root directory with three subdirectories. That layout was built and verified end to end.
+
+Every number below comes from a live request made against `oracle-open-data-seminole` on
+**2026-09-01, 12:56–13:36 UTC**. All test objects and the test IPNS name were deleted afterwards;
+the bucket finished at 0 objects and the account at 0 names.
+
+---
+
+## Table of contents
+
+- [Verdict summary](#verdict-summary)
+- [The blocking constraint: one IPNS name, not three](#the-blocking-constraint-one-ipns-name-not-three)
+- [Recommended layout](#recommended-layout)
+- [Route (a) — CAR import](#route-a--car-import)
+  - [Building a CAR](#building-a-car)
+  - [Uploading a CAR](#uploading-a-car)
+  - [Path addressing inside the CAR](#path-addressing-inside-the-car)
+  - [Size: no 100 MB cap](#size-no-100-mb-cap)
+  - [Partial CARs: the stitching trick](#partial-cars-the-stitching-trick)
+- [Route (b) — index.json indirection](#route-b--indexjson-indirection)
+- [IPNS: create, re-point, propagation](#ipns-create-re-point-propagation)
+  - [Exact API calls](#exact-api-calls)
+  - [Measured propagation delay](#measured-propagation-delay)
+  - [Consequence: do not read back through ipfs.filebase.io](#consequence-do-not-read-back-through-ipfsfilebaseio)
+- [Range requests](#range-requests)
+- [Throughput and publish-duration estimate](#throughput-and-publish-duration-estimate)
+- [Free-tier ceilings that will be hit](#free-tier-ceilings-that-will-be-hit)
+- [End-to-end reproduction](#end-to-end-reproduction)
+- [Implementation cautions](#implementation-cautions)
+- [Open questions](#open-questions)
+
+---
+
+## Verdict summary
+
+| Finding | Result | Evidence |
+| --- | --- | --- |
+| CAR import yields a directory CID | **Yes** | `x-amz-meta-cid` on the uploaded object equals the locally computed CAR root, byte for byte, in all 8 CAR uploads |
+| Files inside the CAR are path-addressable through a gateway | **Yes** | `/ipfs/<root>/shards/01.json` → `200`, correct body |
+| Range requests work on a Parquet | **Yes** | `curl -r 0-3` → `206` + `PAR1`; mid-file range matches local bytes exactly |
+| CAR import capped at 100 MB | **No** | A 118 MB CAR imported successfully via multipart; root CID matched |
+| A CAR may reference already-pinned CIDs it does not contain | **Yes** | A 201-byte CAR with only a root directory node resolved through to children |
+| IPNS create → resolvable | **~2 s** | measured |
+| IPNS re-point → visible on `ipfs.io` | **< 5 s** | measured |
+| IPNS re-point → visible on `ipfs.filebase.io` | **296 s and 378 s** (two samples) | CDN `max-age=300` |
+| Three IPNS names on this plan | **Impossible** | `409 ERR_TOO_MANY_NAMES` on the 2nd, 3rd and 4th create |
+| Route (b) needed | **No** | route (a) is cheaper on requests, bytes, and hops |
+
+---
+
+## The blocking constraint: one IPNS name, not three
+
+The brief assumes three IPNS names (`oracle-open-data-seminole`, `oracle-query-table-seminole`,
+`oracle-geo-index-seminole`). The account cannot hold three.
+
+With zero names existing, four creates were attempted in sequence:
+
+```
+-- create cap-probe-1 --  200  {"label":"cap-probe-1","network_key":"k51qzi5uqu5dgwkd…","sequence":1}
+-- create cap-probe-2 --  409  {"error":{"reason":"ERR_TOO_MANY_NAMES","details":"You've reached the maximum number of names for your plan."}}
+-- create cap-probe-3 --  409  ERR_TOO_MANY_NAMES
+-- create cap-probe-4 --  409  ERR_TOO_MANY_NAMES
+```
+
+This mirrors the one-bucket limit already discovered. Two ways forward:
+
+1. **Pay.** If the three separate, independently re-pointable names are a hard product
+   requirement (e.g. the MCP server and the map UI must be able to move independently), the plan
+   has to be upgraded.
+2. **One name, three subdirectories.** One IPNS name points at a county root directory whose
+   children are `open-data/`, `query-table/`, and `geo-index/`. Consumers address
+   `/ipns/<key>/query-table/seminole.parquet` instead of `/ipns/<query-table-key>/seminole.parquet`.
+
+Option 2 was built and verified and is what the rest of this document recommends. Its one real
+cost: the three datasets can no longer be published independently — re-pointing the single name
+publishes whatever the current root says, so all three move together. Given that they are all
+regenerated by the same county refresh run, that is arguably correct anyway.
+
+---
+
+## Recommended layout
+
+One bucket, one IPNS name, one root DAG:
+
+```
+/ipns/<network_key>/
+├── open-data/          consolidation index
+│   ├── index.json
+│   └── shards/NN.json
+├── query-table/        MCP / DuckDB
+│   ├── manifest.json
+│   └── seminole.parquet
+└── geo-index/          map UI
+    ├── manifest.json
+    └── geo.json
+```
+
+The S3 bucket holds only the CAR files that produced this DAG — it is a staging area, not the
+served surface:
+
+```
+layout/open-data.car
+layout/query-table.car
+layout/geo-index.car
+layout/root.car
+```
+
+Verified against the real root `bafybeidud5hxvf4pz37cscuxtfrdah5rz4jyymambyxndkajcrquwpgs4m`:
+
+```
+open-data/index.json        http=200  {"county":"seminole","shard_count":2}
+open-data/shards/01.json    http=200  {"shard":"01","properties":[{"parcel":"01-1","owner":"DEMO"}]}
+geo-index/geo.json          http=200  {"bbox":[-81.5,28.6,-81.0,28.9],"value_min":50000,"value_max":900000}
+query-table/manifest.json   http=200  {"dataset":"query-table","file":"seminole.parquet","rows":2000}
+query-table/seminole.parquet  r=0-3      http=206  50 41 52 31   (PAR1)
+query-table/seminole.parquet  r=1000-15  http=206  matches local bytes
+```
+
+and through IPNS, ten seconds after the re-point:
+
+```
+$ curl -sL https://ipfs.io/ipns/k51qzi5uqu5dgwkdcu2ci63xsjnzx6lxbsl9b9ph8lykt6ilsmw3f2sgzeajos/geo-index/geo.json
+{"bbox":[-81.5,28.6,-81.0,28.9],"value_min":50000,"value_max":900000}
+
+$ curl -sL -r 0-3 https://ipfs.io/ipns/k51qzi.../query-table/seminole.parquet | xxd
+00000000: 5041 5231                                PAR1
+```
+
+---
+
+## Route (a) — CAR import
+
+### Building a CAR
+
+`ipfs-car` v3 is the tool. Nothing needs to be installed system-wide and no IPFS daemon is
+required — it is a pure-JS packer:
+
+```bash
+npm i ipfs-car@3
+npx ipfs-car pack ./open-data --output open-data.car --no-wrap
+# prints the root CID on stdout
+npx ipfs-car roots open-data.car
+npx ipfs-car ls    open-data.car
+```
+
+Packing is effectively free. A 118 MB tree of 78 JSON shards packed in **0.68 s**; an 8.1 MB tree
+packed in **0.31 s**. Extrapolated to the real ~3.7 GB payload that is well under a minute of CPU,
+so CAR packaging is not a cost consideration at all.
+
+> **Pitfall — `--no-wrap` collapses single-child directories.**
+> `--no-wrap` means "do not add a wrapper directory". If the input directory contains exactly one
+> entry, it descends past it. Packing a `query-table/` directory that held only
+> `seminole.parquet` produced `bafkreibye5c…` — a **raw file CID, not a directory** — and every
+> `/<root>/seminole.parquet` request 404'd. Packing a `cap/` directory that held only `shards/`
+> made `shards/` the root, so the real path was `/<root>/000.json`, not `/<root>/shards/000.json`.
+>
+> Fix: always write a `manifest.json` alongside the data in every dataset directory. Two entries
+> means the directory survives packing, and the manifest is useful metadata anyway. After adding
+> manifests, all three dataset CARs packed as proper directories.
+
+### Uploading a CAR
+
+The trigger is the `x-amz-meta-import: car` user metadata header. Filebase decodes the archive,
+pins the whole DAG, and reports the root CID back as `x-amz-meta-cid`.
+
+```bash
+aws --endpoint-url https://s3.filebase.com s3api put-object \
+  --bucket oracle-open-data-seminole \
+  --key   layout/open-data.car \
+  --body  open-data.car \
+  --metadata import=car
+```
+
+Read the CID back either from the `PutObject` response headers or with a follow-up `HeadObject`:
+
+```bash
+aws --endpoint-url https://s3.filebase.com s3api head-object \
+  --bucket oracle-open-data-seminole --key layout/open-data.car --query 'Metadata'
+{
+    "Cid": "bafybeifccxaydhmq2bny2llqlao7hw5q3eq725gh533jd7uwzzcvhbfu3e",
+    "Import": "car",
+    "Pinning-Status": "pinned"
+}
+```
+
+The returned CID matched the locally computed root exactly on every one of the eight CAR uploads
+performed, which means **the pipeline can know the root CID before it uploads** and does not have
+to round-trip to discover it.
+
+`HeadObject` is not needed at all: the raw `PutObject` response already carries the header. Via
+boto3, `response['ResponseMetadata']['HTTPHeaders']['x-amz-meta-cid']`:
+
+```
+etag: "1e6150203acaa9577ef0dcce5f2a122a"
+server: Filebase
+x-amz-meta-cid: QmNMtkF85PVeamDB3G3VLrK7rJErRTg39v9TQpjmEde9u5
+```
+
+`aws s3 cp` also works and switches to multipart above 8 MB; multipart CAR imports pin correctly
+(verified at 8.1 MB and 118 MB).
+
+### Path addressing inside the CAR
+
+This is the whole point of the route and it works:
+
+```
+$ curl https://ipfs.filebase.io/ipfs/bafybeifccx…/index.json
+{"county":"seminole","shards":["shards/00.json","shards/01.json","shards/02.json"],"generated":"2026-09-01"}
+
+$ curl https://ipfs.filebase.io/ipfs/bafybeifccx…/shards/01.json
+{"shard":"01","properties":[{"parcel":"01-0001","owner":"TEST","value":250000}]}
+```
+
+Requesting the bare root returns `301` to the trailing-slash form, which then serves an HTML
+directory listing. That listing also exposes each child's own CID, so per-file CIDs remain
+available under route (a) — you do not give them up by packaging into a directory.
+
+The content is genuinely on the public network, not just inside Filebase. `ipfs.io` and
+`dweb.link` both served CAR-imported directory paths without Filebase involvement:
+
+```
+ipfs.io   /ipfs/bafybeibfocy…/index.json   http=200  0.77 s
+dweb.link /ipns/k51qzi…/index.json         http=200  1.37 s (redirects to the subdomain gateway)
+```
+
+### Size: no 100 MB cap
+
+Third-party documentation claims a 100 MB ceiling on CAR imports. **That is not true of
+Filebase.** A 118 MB CAR (78 shards, 118 MB of JSON) imported cleanly:
+
+```
+upload: ./cap.car to s3://oracle-open-data-seminole/cartest/cap    (2 m 16 s)
+{ "Cid": "bafybeigfmvvaftisca56h52k4bxexjnjdwxu5qwryjfa6sjcyxw6ks3tq4",
+  "Import": "car", "Pinning-Status": "pinned" }
+```
+
+and every file inside it, including ones never previously requested, was retrievable by path with
+a `206` range response. The DAG is fully pinned, not just the root block.
+
+The ceiling above 118 MB was not probed — uploading multiple GB to establish it was out of scope.
+Standard S3 object limits (5 GB single PUT, 5 TB multipart) presumably apply, but do not rely on
+that untested, because the stitching trick below makes it irrelevant.
+
+### Partial CARs: the stitching trick
+
+**A CAR does not have to contain the blocks it references.** Filebase accepts a CAR holding only a
+root node whose links point at CIDs already pinned on the account, and the gateway traverses
+through to them.
+
+Proof: two directories were uploaded as separate CARs, then a **201-byte** CAR containing a single
+UnixFS directory block with two links was uploaded:
+
+```
+PARENT_ROOT=bafybeicg6zpjnse7vaimv445tqgfmo6pkfudfthv5kq6orcpx3plvlzjyu
+parent.car bytes=201
+
+{ "Cid": "bafybeicg6zpjnse7vaimv445tqgfmo6pkfudfthv5kq6orcpx3plvlzjyu",
+  "Import": "car", "Pinning-Status": "pinned" }
+
+gen-a/probe.json  http=200  {"gen":"A"}
+gen-b/probe.json  http=200  {"gen":"B"}
+```
+
+The 265-byte `root.car` that stitches the three real datasets together was built the same way.
+
+This matters for three reasons:
+
+- **No monolithic upload.** The county root never has to be shipped as one multi-GB archive. Each
+  dataset — and, if wanted, each shard group — is its own CAR, and a few hundred bytes of root
+  block joins them.
+- **Incremental republish.** If only the query table changed, upload one new `query-table.car`,
+  rebuild the tiny root CAR with the new child CID, upload it, re-point IPNS. The unchanged
+  `open-data/` subtree is not re-uploaded.
+- **Resumability.** A failed dataset upload does not invalidate the others.
+
+Minimal generator (no daemon, pure JS — `@ipld/car`, `@ipld/dag-pb`, `ipfs-unixfs`,
+`multiformats`):
+
+```js
+import fs from 'fs'
+import { CarWriter } from '@ipld/car'
+import * as dagPB from '@ipld/dag-pb'
+import { UnixFS } from 'ipfs-unixfs'
+import { CID } from 'multiformats/cid'
+import { sha256 } from 'multiformats/hashes/sha2'
+import { Readable } from 'stream'
+
+// node mkroot.mjs root.car open-data=bafy… query-table=bafy… geo-index=bafy…
+const [out, ...pairs] = process.argv.slice(2)
+const links = pairs
+  .map(p => { const [Name, c] = p.split('='); return { Name, Tsize: 1024, Hash: CID.parse(c) } })
+  .sort((a, b) => (a.Name < b.Name ? -1 : 1))          // dag-pb links must be name-sorted
+
+const bytes = dagPB.encode(dagPB.prepare({
+  Data: new UnixFS({ type: 'directory' }).marshal(),
+  Links: links
+}))
+const root = CID.create(1, dagPB.code, await sha256.digest(bytes))
+
+const { writer, out: stream } = CarWriter.create([root])
+const done = Readable.from(stream).pipe(fs.createWriteStream(out))
+await writer.put({ cid: root, bytes })                 // root block only, no children
+await writer.close()
+await new Promise(r => done.on('finish', r))
+console.log(root.toString())
+```
+
+`Tsize` is a cumulative-size hint used for directory listings; a placeholder was accepted without
+complaint. Set it properly if listing sizes matter.
+
+---
+
+## Route (b) — index.json indirection
+
+Route (b) does work — it was built to confirm it, not to recommend it:
+
+```
+btest/shards/00.json  → QmcdtFdrZRUgVxv4ESnE85ZX6myEvxzH1ZHxMkPfbHs287
+btest/shards/01.json  → QmbtN6zVAEhvYCBYvcngaVGawmkT4ReCZkyNAevYSyrgLc
+btest/shards/02.json  → QmR6MbTssDhf1HqwTEQnSFf5wiNxwBLcsvKHtLC8MoRkXh
+btest/index.json      → QmXNkwEfKpZWR5PkJdsd78nDALfovDAs2w3zgB9VSVz8Zu
+```
+
+Because `x-amz-meta-cid` comes back on the `PutObject` response itself, building the index costs
+no extra requests. So route (b) is not *hard*. It is simply worse:
+
+| | Route (a) CAR | Route (b) index.json |
+| --- | --- | --- |
+| S3 requests per publish | ~4 (one per dataset + root) | one per shard + one index |
+| Consumer resolution hops | 1 (`/ipns/key/path`) | 2 (fetch index, then fetch shard CID) |
+| Works with a plain HTTP client / DuckDB `read_parquet(url)` | Yes | No — consumer must understand the index format |
+| Directory listing at the gateway | Yes | No |
+| Conventional IPFS layout | Yes | No |
+| Extra tooling | `ipfs-car` (12 s `npm i`, pure JS) | none |
+| Partial republish | Yes, via stitched root CAR | Yes |
+
+The `ipfs-car` dependency was the only argument for (b), and it turned out to cost a 12-second
+`npm install` and sub-second packing. That is not a reason to accept a non-standard layout and an
+extra round trip on every consumer read. **Route (b) is dropped.**
+
+The decisive point is the third row. The MCP server's embedded DuckDB wants to point at a URL and
+issue range reads. Under (a) that URL is
+`https://ipfs.io/ipns/<key>/query-table/seminole.parquet` and nothing else is needed. Under (b)
+the MCP would first have to fetch and parse an index to discover a CID, which is bespoke client
+code in a place where none is otherwise required.
+
+---
+
+## IPNS: create, re-point, propagation
+
+### Exact API calls
+
+Auth is `Bearer base64(ACCESS_KEY_ID:SECRET_ACCESS_KEY)` built from the S3 keys. There is no
+separate token.
+
+```bash
+FB_AUTH=$(printf '%s:%s' "$FILEBASE_ACCESS_KEY_ID" "$FILEBASE_SECRET_ACCESS_KEY" | base64)
+```
+
+**List** — `GET /v1/names`:
+
+```bash
+curl -s -H "Authorization: Bearer $FB_AUTH" https://api.filebase.io/v1/names
+```
+
+**Create** — `POST /v1/names`. Returns `200` with the record. `network_key` is the resolvable
+`k51…` string; everything else addresses the name by its `label`.
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $FB_AUTH" -H "Content-Type: application/json" \
+  -d '{"label":"oracle-seminole","cid":"bafybei…","enabled":true}' \
+  https://api.filebase.io/v1/names
+```
+
+```json
+{"enabled":true,"label":"oracle-seminole",
+ "network_key":"k51qzi5uqu5dgwkdcu2ci63xsjnzx6lxbsl9b9ph8lykt6ilsmw3f2sgzeajos",
+ "cid":"bafybei…","sequence":1,"published_at":null,
+ "created_at":"2026-09-01T09:24:53.902-04:00","updated_at":"2026-09-01T09:24:53.902-04:00"}
+```
+
+**Re-point** — `PUT /v1/names/<label>`. Returns `200`, `sequence` increments.
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Bearer $FB_AUTH" -H "Content-Type: application/json" \
+  -d '{"cid":"bafybeidud5hxvf4pz37cscuxtfrdah5rz4jyymambyxndkajcrquwpgs4m"}' \
+  https://api.filebase.io/v1/names/oracle-seminole
+```
+
+```json
+{"cid":"bafybeidud5hxv…","sequence":3, … }
+```
+
+**Delete** — `DELETE /v1/names/<label>` → `204`.
+
+Behaviours worth encoding in the publisher:
+
+- The lookup key is the **label**, not the network key. `GET /v1/names/<network_key>` returns
+  `404 NOT_FOUND`.
+- `POST` with an existing label fails: `500`, `ERR_NAME_INVALID`, *"Label has already been taken."*
+  Create is **not** idempotent — the publisher must `GET` first, or `PUT` and fall back to `POST`
+  on `404`.
+- `PUT` to an unknown label returns `404 NOT_FOUND`.
+- `POST` beyond the plan limit returns `409 ERR_TOO_MANY_NAMES`.
+- The `network_key` is stable across re-points — only `cid`, `sequence` and `updated_at` change.
+  Consumer URLs never need to change, which is the property the design depends on.
+
+### Measured propagation delay
+
+Two clean measurements, both with the target content already warm on the gateways so that
+content-fetch latency does not contaminate the number.
+
+**Create → resolvable:** 2.06 s.
+
+**Re-point → visible:**
+
+| Gateway | Delay |
+| --- | --- |
+| `ipfs.io` | **< 5 s** (first poll after the `PUT` already returned the new content) |
+| `ipfs.filebase.io` | **377.7 s** (sample 1: 296 s) |
+
+The raw poll, alternating both gateways after re-pointing from generation A to generation B:
+
+```
+put_returned_at=1206ms
+t=  4913ms filebase={"gen":"A"} ipfs.io={"gen":"B"}
+t= 17181ms filebase={"gen":"A"} ipfs.io={"gen":"B"}
+…
+t=281472ms filebase={"gen":"A"} ipfs.io={"gen":"B"}
+t=377663ms filebase={"gen":"B"} ipfs.io={"gen":"B"}
+REPOINT_VISIBLE_FILEBASE_MS=377663
+```
+
+The re-point itself is instantaneous — `ipfs.io` proves the record was republished within seconds.
+The 5–6 minute figure is **purely `ipfs.filebase.io` CDN caching**, and it matches the header the
+gateway sends:
+
+```
+cache-control: public, max-age=300
+```
+
+### Consequence: do not read back through ipfs.filebase.io
+
+The Filebase gateway caches **per path**, not per name, and the entries expire independently. In
+the first experiment a single IPNS name simultaneously served three different generations:
+
+```
+/ipns/<key>/index.json     → x-ipfs-roots: bafybeifccx…   (generation 1)
+/ipns/<key>/manifest.json  → x-ipfs-roots: bafybeif7zw…   (generation 2)
+/ipns/<key>/shards/000.json→ x-ipfs-roots: bafybeibfoc…   (generation 3, current)
+```
+
+Sending `Cache-Control: no-cache` did not bust it, and neither did a cache-busting query string.
+A path that exists in the old root but not the new one kept returning `200` with stale content for
+minutes after the re-point, and intermittently hung instead of returning `404`.
+
+Three consequences for the publisher and the consumers:
+
+1. **Verification must not use `ipfs.filebase.io`.** A post-publish smoke test against it will
+   read the previous run's data and either pass falsely or fail falsely. Verify against
+   `https://ipfs.io/ipns/<key>/…`, which was consistently current within seconds, or verify the
+   immutable `/ipfs/<root>/…` URL, which cannot be stale by construction.
+2. **Point consumers at a gateway you trust for freshness.** The brief prefers
+   `ipfs.filebase.io` because `dweb.link` was thought to have flaky Range support. That concern
+   did not reproduce (see below), and the staleness problem is worse than the one it avoids.
+3. **Never publish twice within ~5 minutes** without expecting a mixed-generation window on that
+   gateway.
+
+The `x-ipfs-roots` response header names the root a request actually resolved through. It is the
+cheapest possible publish assertion — compare it to the root you just published.
+
+---
+
+## Range requests
+
+`Range` works everywhere tested, on both standalone object CIDs and files nested inside
+CAR-imported directories, and across three gateways. `accept-ranges: bytes` is advertised.
+
+Test file: a 73,339-byte Snappy Parquet, 2,000 rows, 500-row row groups.
+
+```
+$ curl -sI https://ipfs.filebase.io/ipfs/QmRAkU6QFfYwnSBqFiXs3y3fY7acy55S9iAr7HKdUxq11f
+HTTP/2 200
+content-length: 73339
+accept-ranges: bytes
+etag: "QmRAkU6QFfYwnSBqFiXs3y3fY7acy55S9iAr7HKdUxq11f"
+
+$ curl -s -r 0-3        …  →  206, 4 bytes,  50 41 52 31              "PAR1"
+$ curl -s -r -4         …  →  206, 4 bytes,  50 41 52 31              trailing magic
+$ curl -s -r 1000-1015  …  →  206, 16 bytes, 3132 7805 0031 3278 …
+$ dd if=query_table.parquet bs=1 skip=1000 count=16 | xxd
+                                              3132 7805 0031 3278 …    identical
+```
+
+The mid-file range returns 16 bytes, not the whole file, and the bytes match the local file
+exactly. Ranges also resolve correctly three levels deep through the stitched root:
+
+```
+/ipfs/<county-root>/query-table/seminole.parquet   r=0-3      206  PAR1
+/ipfs/<county-root>/query-table/seminole.parquet   r=1000-15  206  correct bytes
+```
+
+Cross-gateway:
+
+| Gateway | `r=0-3` | `r=1000-1015` |
+| --- | --- | --- |
+| `ipfs.filebase.io` | `206` `PAR1` | `206`, correct |
+| `ipfs.io` | `206` `PAR1` | — |
+| `dweb.link` | — | `206`, correct |
+
+**The `dweb.link` Range concern did not reproduce.** It returned a correct 16-byte `206` for a
+mid-file range, after following its redirect to the subdomain form
+(`<key>.ipns.dweb.link`) — use `curl -L`.
+
+Cold-fetch latency is the real caveat, not Range. A CID's first gateway request frequently took
+**~60 s** (observed at 60.4, 60.4, 59.5, 60.3, 60.4, 58.8 s), then dropped to **0.5 s** for
+everything afterwards. The penalty is per block, not per root: on the 118 MB CAR, `000.json` and
+`077.json` answered in 0.5 s while `040.json` took 60.4 s on its first touch. It is also not
+universal — two small CARs uploaded and fetched moments later answered in 0.5 s immediately.
+
+For the MCP this means the **first** DuckDB query against a freshly published Parquet may see
+minute-scale stalls while row groups are pulled in one at a time. Warm the file after publish by
+issuing a full `GET` of `query-table/seminole.parquet` before declaring the run complete.
+
+---
+
+## Throughput and publish-duration estimate
+
+All measurements are from a developer laptop and are **client-uplink-bound, not Filebase-bound**.
+Read them as a lower bound on what a cloud runner will do.
+
+| Operation | Measurement |
+| --- | --- |
+| CAR packing, 8.1 MB tree | 0.31 s |
+| CAR packing, 118 MB tree | 0.68 s |
+| Single-stream PUT, 8.1 MiB | 8.7 s and 19.2 s (0.42–0.93 MiB/s) |
+| 4 concurrent PUTs, 8.1 MiB each | 97.8 s → 0.33 MiB/s aggregate — **no gain from parallelism** |
+| Multipart `s3 cp`, 118 MiB | 136.6 s → **0.86 MiB/s** |
+| Small-object PUT rate, 145 B, concurrency 8 | 20.2 PUT/s |
+| Small-object PUT rate, concurrency 32 | **33.5 PUT/s** |
+| Small-object PUT rate, concurrency 64 | 23.3 PUT/s |
+
+Two things follow. Bulk transfer saturates the client's uplink at roughly 0.9 MiB/s (~7 Mbit/s)
+and adding parallel streams does not help — so **bandwidth is the only lever for the CAR route**.
+Small-request throughput peaks near 33 PUT/s at concurrency ~32 and degrades at 64; each request
+costs roughly a second of round trip, so a per-property object layout is latency-bound.
+
+**Sizing for Seminole.** Scaling the reference county (511,695 properties / 10.65 GB) gives
+~181,000 properties ≈ **3.77 GB**.
+
+| Scenario | Uplink | Estimate |
+| --- | --- | --- |
+| Reference county's observed rate | 2.6 MB/s (~21 Mbit/s) | **~24 minutes** |
+| This laptop, measured | 0.86 MiB/s | **~75 minutes** |
+| Cloud runner, 100 Mbit/s | 12.5 MB/s | **~5 minutes** |
+| Cloud runner, 1 Gbit/s | — | bounded by Filebase ingest, not measured |
+
+Add to any of these: ~1 minute of CAR packing, ~4 seconds of API calls, and — if verification is
+done through `ipfs.filebase.io` rather than `ipfs.io` — up to 6 minutes of cache wait. Verify
+through `ipfs.io` and that last term disappears.
+
+The reference county's ~70 minutes for 10.65 GB implies ~2.6 MB/s sustained, which is in the same
+family as these numbers. **A ~25-minute publish for Seminole from a reasonably connected runner is
+a sound planning figure**, with a hard floor set by whatever the runner's uplink actually is.
+
+For comparison, had we gone with one S3 object per property: 181,000 PUTs at the measured
+33 PUT/s is **~91 minutes of request overhead alone**, on top of the same 3.77 GB of bytes. Even
+at Filebase's documented 500 req/s account ceiling that is 6 minutes of pure request time that the
+CAR route simply does not spend. This is the quantitative reason route (a) wins.
+
+---
+
+## Free-tier ceilings that will be hit
+
+Filebase's documented free-plan limits, against a ~3.77 GB Seminole payload:
+
+| Limit | Free plan | Seminole needs |
+| --- | --- | --- |
+| Buckets | 1 | 1 — fits (already confirmed by `TooManyBuckets`) |
+| IPNS names | **1** (confirmed, `409`) | 3 as designed — **does not fit** |
+| Storage | 5 GB | ~3.77 GB for one generation — fits once, **not twice** |
+| Bandwidth | 5 GB / month | one full read of the dataset consumes it |
+| S3 API rate | 500 req/s | not a constraint under route (a) |
+
+Two of these bite. Storage has no headroom to keep the previous generation alongside the new one,
+so a publish cannot be staged-then-swapped; and 5 GB/month of egress will not survive a single
+consumer doing a full crawl, let alone a map UI. **The free plan is adequate for the mechanics
+work proven here and inadequate for operating the published datasets.** That should be settled
+before the publish path is wired up, because it also settles the one-vs-three IPNS names question.
+
+---
+
+## End-to-end reproduction
+
+Credentials live at `~/.filebase/credentials` (mode 600) as `FILEBASE_ACCESS_KEY_ID` /
+`FILEBASE_SECRET_ACCESS_KEY`. Source them; do not inline them.
+
+```bash
+set -a; . ~/.filebase/credentials; set +a
+export AWS_ACCESS_KEY_ID="$FILEBASE_ACCESS_KEY_ID"
+export AWS_SECRET_ACCESS_KEY="$FILEBASE_SECRET_ACCESS_KEY"
+export AWS_DEFAULT_REGION=us-east-1
+EP=https://s3.filebase.com
+BUCKET=oracle-open-data-seminole
+AUTH=$(printf '%s:%s' "$FILEBASE_ACCESS_KEY_ID" "$FILEBASE_SECRET_ACCESS_KEY" | base64)
+
+# 1. pack each dataset (each dir must hold >= 2 entries; keep a manifest.json)
+for d in open-data query-table geo-index; do
+  npx ipfs-car pack "build/$d" --output "$d.car" --no-wrap
+done
+
+# 2. upload each dataset CAR, capture the root CID
+for d in open-data query-table geo-index; do
+  aws --endpoint-url $EP s3 cp "$d.car" "s3://$BUCKET/layout/$d.car" --metadata import=car
+  aws --endpoint-url $EP s3api head-object --bucket $BUCKET --key "layout/$d.car" \
+      --query 'Metadata.Cid' --output text > "cid-$d.txt"
+done
+
+# 3. stitch a ~265-byte root CAR referencing those three CIDs, upload it
+ROOT=$(node mkroot.mjs root.car \
+        "open-data=$(cat cid-open-data.txt)" \
+        "query-table=$(cat cid-query-table.txt)" \
+        "geo-index=$(cat cid-geo-index.txt)")
+aws --endpoint-url $EP s3api put-object --bucket $BUCKET --key layout/root.car \
+    --body root.car --metadata import=car
+
+# 4. re-point the single IPNS name (create with POST the first time)
+curl -s -X PUT -H "Authorization: Bearer $AUTH" -H "Content-Type: application/json" \
+     -d "{\"cid\":\"$ROOT\"}" https://api.filebase.io/v1/names/oracle-seminole
+
+# 5. verify against ipfs.io, NOT ipfs.filebase.io, and assert on x-ipfs-roots
+KEY=$(curl -s -H "Authorization: Bearer $AUTH" \
+        https://api.filebase.io/v1/names/oracle-seminole | jq -r .network_key)
+curl -sL -D - -o /dev/null "https://ipfs.io/ipns/$KEY/query-table/manifest.json" | grep -i x-ipfs-roots
+curl -sL -r 0-3 "https://ipfs.io/ipns/$KEY/query-table/seminole.parquet" | xxd   # expect PAR1
+
+# 6. warm the parquet so the MCP's first query does not eat the cold-fetch penalty
+curl -sL -o /dev/null "https://ipfs.io/ipns/$KEY/query-table/seminole.parquet"
+```
+
+---
+
+## Implementation cautions
+
+1. **Always put at least two entries in a dataset directory before packing with `--no-wrap`**, or
+   the root collapses to a child and every path 404s. A `manifest.json` is the cheapest fix and is
+   independently useful.
+2. **Assert on the root CID.** The locally computed CAR root matched Filebase's `x-amz-meta-cid`
+   on every upload, so compare them and fail the run on mismatch. It is free.
+3. **Assert on `x-ipfs-roots` after re-pointing**, against `ipfs.io`. A silent IPNS failure is the
+   exact risk called out in the brief, and this header is the direct detector.
+4. **Do not verify through `ipfs.filebase.io`.** It served three different generations of one name
+   at the same time, ignored `no-cache`, and was 6 minutes behind.
+5. **Create is not idempotent.** `POST` with an existing label returns `500 ERR_NAME_INVALID`.
+   Use `PUT`, fall back to `POST` on `404`.
+6. **Address names by label, not by network key**, in the API. `network_key` is only for gateway
+   URLs.
+7. **Warm the Parquet after publish** with one full `GET`, or the first DuckDB query pays 60 s per
+   cold block.
+8. **Deleting the CAR object does not immediately unpin the DAG** — a never-previously-fetched
+   path was still served `200` about a minute after the object was deleted. Do not assume the
+   previous generation vanishes on delete, and do not assume it persists either; the actual
+   unpin/GC timing was not established.
+9. **`Pinning-Status: pinned` was returned synchronously** on every upload including the 118 MB
+   multipart one, so no polling loop for pin completion is needed.
+
+---
+
+## Open questions
+
+- **Plan upgrade.** One IPNS name, 5 GB storage and 5 GB/month egress do not support operating
+  three datasets for 181,000 properties. This is a commercial decision, not a technical one, and
+  it determines whether the layout is one root with three subdirectories or three independent
+  names.
+- **CAR size ceiling above 118 MB.** Not probed. The stitching trick means it should never matter,
+  but if someone does try a single multi-GB CAR it is untested territory.
+- **The intermittent ~60 s cold fetch.** Reproduced six times and absent several other times. The
+  trigger was not identified — it did not correlate cleanly with time since upload. Worth
+  understanding before promising latency to the map UI.
+- **Unpin timing after object deletion.** Unknown.
+- **Real-world throughput from the actual publish runner.** Every number here is laptop-bound.
+  Re-measure once the runner exists; the estimate scales linearly with uplink.

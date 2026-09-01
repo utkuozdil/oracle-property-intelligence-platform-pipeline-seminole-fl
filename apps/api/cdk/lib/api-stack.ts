@@ -42,7 +42,13 @@ export class ApiStack extends cdk.Stack {
       serviceName: SERVICE_NAME,
       metricsNamespace: METRICS_NAMESPACE,
       targetEnv: props.targetEnv,
-      memorySize: 512,
+      /**
+       * Sized for the parcel snapshot the serving tier holds in memory: ~120 MB of
+       * columnar data plus the transient Parquet buffers it is built from. The headroom
+       * above that is bought for CPU rather than RAM — Lambda scales both together, and
+       * the extra cores are what keep the cold-start Parquet parse in the low seconds.
+       */
+      memorySize: 2048,
       timeout: cdk.Duration.seconds(30),
       environment: {
         TABLE_NAME: props.table.tableName,

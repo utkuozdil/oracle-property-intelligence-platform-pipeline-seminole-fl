@@ -1,169 +1,246 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { OwnerDetailView } from './OwnerViews';
+import { ParcelDetailView } from './ParcelDetailView';
+import { RadiusSearchView, type RadiusState } from './RadiusSearchView';
+import { RunSummaryView } from './RunSummaryView';
+import { SearchView, type SearchState } from './SearchView';
 import { api } from './api';
+import { formatCount } from './format';
+import {
+  EMPTY_RADIUS,
+  parseLocation,
+  toNearbyInput,
+  toSearchInput,
+  toSearchString,
+  type AppState,
+  type RadiusQuery,
+  type SearchQuery,
+  type ViewName,
+} from './query';
 
-type Health = Awaited<ReturnType<typeof api.system.health.query>>;
-type Readiness = Awaited<ReturnType<typeof api.system.readiness.query>>;
+type MetaResponse = Awaited<ReturnType<typeof api.parcels.meta.query>>;
 
-interface Probe {
-  health: Health;
-  readiness: Readiness;
-}
-
-type ProbeState =
-  { status: 'loading' } | { status: 'ready'; probe: Probe } | { status: 'error'; message: string };
-
-/** Surfaces the pipeline will grow into. Rendered disabled so the shape of the work is visible. */
-const PLANNED_SECTIONS = [
-  { name: 'Run history', detail: 'Per-run source list, record counts, deltas and timestamps' },
-  { name: 'Sources', detail: 'Source inventory with throughput limits and constraints' },
-  { name: 'Parcels', detail: 'Per-parcel stage status across appraisal and permits' },
-  { name: 'Permits', detail: 'Roofing permits with open duration and contractor identity' },
-  { name: 'IPFS artifacts', detail: 'Published CIDs and the IPNS pointer per run' },
-  { name: 'Query layer', detail: 'DuckDB query table and the MCP interface over it' },
+const NAV_ITEMS: { view: ViewName; label: string }[] = [
+  { view: 'runs', label: 'Run summary' },
+  { view: 'search', label: 'Parcel search' },
+  { view: 'radius', label: 'Radius search' },
 ];
 
+/**
+ * URL-driven shell. Every piece of view state — which view is open, filters, the radius
+ * centre, the page, the open parcel, and the open owner — lives in the query string, so
+ * every result is linkable and the browser back button steps back through detail views
+ * without extra history plumbing.
+ */
 export function App() {
-  const [state, setState] = useState<ProbeState>({ status: 'loading' });
-
-  const runProbe = useCallback(async () => {
-    setState({ status: 'loading' });
-    try {
-      const [health, readiness] = await Promise.all([
-        api.system.health.query(),
-        api.system.readiness.query(),
-      ]);
-      setState({ status: 'ready', probe: { health, readiness } });
-    } catch (error) {
-      setState({
-        status: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, []);
+  const [state, setState] = useState<AppState>(() => parseLocation(window.location.search));
+  const [meta, setMeta] = useState<MetaResponse | null>(null);
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [search, setSearch] = useState<SearchState>({ status: 'loading' });
+  const [radius, setRadius] = useState<RadiusState>({ status: 'idle' });
 
   useEffect(() => {
-    void runProbe();
-  }, [runProbe]);
+    const onPopState = (): void => setState(parseLocation(window.location.search));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const navigate = useCallback((next: AppState) => {
+    window.history.pushState(null, '', toSearchString(next));
+    setState(next);
+  }, []);
+
+  const onApply = useCallback(
+    (query: SearchQuery) =>
+      navigate({ ...state, view: 'search', query, parcelId: null, owner: null }),
+    [navigate, state],
+  );
+  const onApplyRadius = useCallback(
+    (next: RadiusQuery) =>
+      navigate({ ...state, view: 'radius', radius: next, parcelId: null, owner: null }),
+    [navigate, state],
+  );
+  const onOpenParcel = useCallback(
+    (parcelId: string) => navigate({ ...state, parcelId, owner: null }),
+    [navigate, state],
+  );
+  const onOpenOwner = useCallback(
+    (owner: string) => navigate({ ...state, owner, parcelId: null }),
+    [navigate, state],
+  );
+  const onOpenView = useCallback(
+    (view: ViewName) => navigate({ ...state, view, parcelId: null, owner: null }),
+    [navigate, state],
+  );
+  const onBack = useCallback(
+    () => navigate({ ...state, parcelId: null, owner: null }),
+    [navigate, state],
+  );
+
+  /** Opening radius search from another view: set the centre and the filters in one step. */
+  const onOpenRadiusAt = useCallback(
+    (near: string, radiusMiles = '5', roofAgeMin = '') =>
+      navigate({
+        ...state,
+        view: 'radius',
+        radius: { ...EMPTY_RADIUS, near, radiusMiles, roofAgeMin },
+        parcelId: null,
+        owner: null,
+      }),
+    [navigate, state],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    api.parcels.meta
+      .query()
+      .then((response) => {
+        if (!cancelled) setMeta(response);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setMetaError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sequence-guarded so a slow earlier response can never overwrite a newer one.
+  const requestSeq = useRef(0);
+  const { query } = state;
+
+  useEffect(() => {
+    const seq = requestSeq.current + 1;
+    requestSeq.current = seq;
+    setSearch({ status: 'loading' });
+
+    api.parcels.search
+      .query(toSearchInput(query))
+      .then((result) => {
+        if (requestSeq.current === seq) setSearch({ status: 'ready', result });
+      })
+      .catch((error: unknown) => {
+        if (requestSeq.current !== seq) return;
+        setSearch({
+          status: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [query]);
+
+  const radiusSeq = useRef(0);
+  const radiusQuery = state.radius;
+  const radiusActive = state.view === 'radius';
+
+  useEffect(() => {
+    if (!radiusActive) return;
+    const input = toNearbyInput(radiusQuery);
+    if (input === null) {
+      setRadius({ status: 'idle' });
+      return;
+    }
+
+    const seq = radiusSeq.current + 1;
+    radiusSeq.current = seq;
+    setRadius({ status: 'loading' });
+
+    api.parcels.nearby
+      .query(input)
+      .then((result) => {
+        if (radiusSeq.current === seq) setRadius({ status: 'ready', result });
+      })
+      .catch((error: unknown) => {
+        if (radiusSeq.current !== seq) return;
+        setRadius({
+          status: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [radiusActive, radiusQuery]);
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <header className="masthead">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
-          <span>Oracle Seminole</span>
+          <div>
+            <span className="brand-name">Oracle Property Intelligence</span>
+            <span className="brand-sub">Seminole County, Florida</span>
+          </div>
         </div>
-        <nav>
-          <button className="nav-item nav-item--active" type="button">
-            Platform status
+        <dl className="snapshot" data-testid="snapshot-meta">
+          <div>
+            <dt>Parcels</dt>
+            <dd data-testid="snapshot-parcel-count">
+              {meta ? formatCount(meta.parcelCount) : '…'}
+            </dd>
+          </div>
+          <div>
+            <dt>Published</dt>
+            <dd data-testid="snapshot-published-at">
+              {meta ? meta.publishedAt.slice(0, 19).replace('T', ' ') + ' UTC' : '…'}
+            </dd>
+          </div>
+        </dl>
+      </header>
+
+      <nav className="viewnav" aria-label="Views" data-testid="view-nav">
+        {NAV_ITEMS.map((item) => (
+          <button
+            key={item.view}
+            type="button"
+            className={state.view === item.view ? 'viewnav-tab viewnav-tab--active' : 'viewnav-tab'}
+            data-testid={`nav-${item.view}`}
+            aria-current={state.view === item.view ? 'page' : undefined}
+            onClick={() => onOpenView(item.view)}
+          >
+            {item.label}
           </button>
-          {PLANNED_SECTIONS.map((section) => (
-            <button key={section.name} className="nav-item" type="button" disabled>
-              {section.name}
-            </button>
-          ))}
-        </nav>
-        <p className="sidebar-foot">Phase 0 — infrastructure only</p>
-      </aside>
+        ))}
+      </nav>
 
       <main className="content">
-        <header className="content-head">
-          <div>
-            <h1>Platform status</h1>
-            <p>
-              This deployment provisions the pipeline&apos;s infrastructure and proves the request
-              path end to end. Ingestion, reconciliation and IPFS publication arrive in later
-              phases.
-            </p>
-          </div>
-          <button className="refresh" type="button" onClick={() => void runProbe()}>
-            Re-run checks
-          </button>
-        </header>
+        {metaError !== null && (
+          <p className="notice notice--error" data-testid="meta-error">
+            Could not load snapshot metadata: {metaError}
+          </p>
+        )}
 
-        <section className="cards">
-          {state.status === 'loading' && <article className="card">Checking the API…</article>}
-
-          {state.status === 'error' && (
-            <article className="card card--error">
-              <h2>API unreachable</h2>
-              <p className="mono">{state.message}</p>
-            </article>
-          )}
-
-          {state.status === 'ready' && (
-            <>
-              <article className="card">
-                <h2>
-                  API<span className="pill pill--ok">{state.probe.health.status}</span>
-                </h2>
-                <dl>
-                  <dt>Service</dt>
-                  <dd className="mono">{state.probe.health.service}</dd>
-                  <dt>County</dt>
-                  <dd className="mono">{state.probe.health.county}</dd>
-                  <dt>Region</dt>
-                  <dd className="mono">{state.probe.health.region}</dd>
-                  <dt>Checked</dt>
-                  <dd className="mono">{state.probe.health.checkedAt}</dd>
-                </dl>
-              </article>
-
-              <article className="card">
-                <h2>
-                  DynamoDB
-                  <span
-                    className={`pill ${
-                      state.probe.readiness.dependencies.dynamodb === 'reachable'
-                        ? 'pill--ok'
-                        : 'pill--bad'
-                    }`}
-                  >
-                    {state.probe.readiness.dependencies.dynamodb}
-                  </span>
-                </h2>
-                <p>
-                  Single-table store keyed <code>RUN#</code>, <code>SOURCE#</code>,{' '}
-                  <code>PARCEL#</code>, <code>ELIG#</code> and <code>CID#</code>.
-                </p>
-              </article>
-
-              <article className="card">
-                <h2>
-                  Data lake
-                  <span
-                    className={`pill ${
-                      state.probe.readiness.dependencies.dataBucket === 'reachable'
-                        ? 'pill--ok'
-                        : 'pill--bad'
-                    }`}
-                  >
-                    {state.probe.readiness.dependencies.dataBucket}
-                  </span>
-                </h2>
-                <dl>
-                  {state.probe.readiness.prefixes.map((prefix) => (
-                    <div key={prefix.prefix} className="prefix-row">
-                      <dt className="mono">{prefix.prefix}</dt>
-                      <dd className="mono">{prefix.objectCount} objects</dd>
-                    </div>
-                  ))}
-                </dl>
-              </article>
-            </>
-          )}
-        </section>
-
-        <section className="planned">
-          <h2>Planned surfaces</h2>
-          <ul>
-            {PLANNED_SECTIONS.map((section) => (
-              <li key={section.name}>
-                <strong>{section.name}</strong>
-                <span>{section.detail}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        {state.parcelId !== null ? (
+          <ParcelDetailView
+            parcelId={state.parcelId}
+            onBack={onBack}
+            onOpenOwner={onOpenOwner}
+            onOpenRadius={onOpenRadiusAt}
+          />
+        ) : state.owner !== null ? (
+          <OwnerDetailView
+            owner={state.owner}
+            onBack={onBack}
+            onOpenParcel={onOpenParcel}
+            onOpenRadius={(near) => onOpenRadiusAt(near, '1', '')}
+          />
+        ) : state.view === 'runs' ? (
+          <RunSummaryView />
+        ) : state.view === 'radius' ? (
+          <RadiusSearchView
+            applied={state.radius}
+            meta={meta}
+            state={radius}
+            onApply={onApplyRadius}
+            onOpenParcel={onOpenParcel}
+            onOpenOwner={onOpenOwner}
+          />
+        ) : (
+          <SearchView
+            applied={state.query}
+            meta={meta}
+            search={search}
+            onApply={onApply}
+            onOpenParcel={onOpenParcel}
+            onOpenOwner={onOpenOwner}
+          />
+        )}
       </main>
     </div>
   );

@@ -4,6 +4,7 @@ cdk.out/
 coverage/
 pnpm-lock.yaml
 .turbo/
+.publish-work/
 
 # The Python tier is formatted by Ruff, not Prettier.
 pipeline/

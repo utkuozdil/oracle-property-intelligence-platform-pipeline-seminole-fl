@@ -5,9 +5,46 @@ export {
   COUNTY,
   parseTargetEnv,
   operationsTopicName,
+  glueJobName,
   ssmParameterNames,
   type TargetEnv,
 } from './service';
+
+export {
+  SOURCE_URL,
+  SOURCE_NAME,
+  SOURCE_USER_AGENT,
+  OBSERVED_ARCHIVE_BYTES,
+  OBSERVED_UNCOMPRESSED_BYTES,
+  OBSERVED_PARCEL_COUNT,
+  ARCHIVE_BYTES_MIN,
+  ARCHIVE_BYTES_MAX,
+  GLUE_DPU_HOUR_USD,
+  GLUE_WORKERS,
+  GLUE_MINUTES_PER_UNCOMPRESSED_GB,
+  COST_CEILING_USD,
+  predictTransformCostUsd,
+  type TransformCostEstimate,
+} from './source';
+
+export {
+  FDOR_LAYER_URL,
+  FDOR_SOURCE_NAME,
+  FDOR_USER_AGENT,
+  FDOR_COUNTY_CODE,
+  FDOR_FIELDS,
+  FDOR_MAX_RECORD_COUNT,
+  FDOR_OBJECTID_WINDOW,
+  FDOR_FETCH_CONCURRENCY,
+  FDOR_RECORD_COUNT_MIN,
+  FDOR_RECORD_COUNT_MAX,
+  OBSERVED_FDOR_RECORD_COUNT,
+  objectIdWindows,
+  fdorWindowWhere,
+  fdorQueryUrl,
+  fdorSnapshotToken,
+  type ObjectIdWindow,
+} from './fdor';
 
 export {
   UNIVERSAL_METRICS,
@@ -34,4 +71,23 @@ export {
   type ArtifactType,
 } from './keys';
 
-export { DATA_PREFIXES, runManifestKey, rawCaptureKey, type DataPrefix } from './storage';
+export {
+  DATA_PREFIXES,
+  STAGED_PARCELS_PREFIX,
+  RAW_ARCHIVE_PREFIX,
+  RAW_EXPANDED_PREFIX,
+  RAW_FDOR_PREFIX,
+  FDOR_POINTER_KEY,
+  PUBLISH_PARCELS_PREFIX,
+  PUBLISH_POINTER_KEY,
+  runManifestKey,
+  rawCaptureKey,
+  rawArchiveKey,
+  fdorSnapshotPrefix,
+  fdorWindowKey,
+  reconciliationKey,
+  changeSetKey,
+  publishedSnapshotPrefix,
+  publishedChangeSetKey,
+  type DataPrefix,
+} from './storage';

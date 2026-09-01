@@ -4,5 +4,10 @@ packages:
 
 # esbuild ships a platform binary via a postinstall script; NodejsFunction bundling
 # needs it. Every other dependency stays script-free.
+#
+# protobufjs arrives transitively under `ipfs-car`, which the IPFS publish step uses to
+# pack CARs. Its postinstall only generates optional CommonJS/TypeScript shims we never
+# import, and CAR packing was verified working without it, so it stays denied.
 allowBuilds:
   esbuild: true
+  protobufjs: false

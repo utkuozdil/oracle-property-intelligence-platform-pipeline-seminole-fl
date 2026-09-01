@@ -50,12 +50,57 @@ def test_glue_job_is_a_pyspark_job_with_bounded_cost(template: Template) -> None
             "Name": "oracle-seminole-dev-seminole-refresh",
             "GlueVersion": "5.0",
             "WorkerType": "G.1X",
-            "NumberOfWorkers": 2,
-            "Timeout": 30,
+            "NumberOfWorkers": 10,
+            "Timeout": 60,
+            # Retries belong to the state machine, which re-evaluates the cost gate and
+            # the idempotency ledger; a Glue-level retry would skip both.
             "MaxRetries": 0,
             "Command": Match.object_like({"Name": "glueetl", "PythonVersion": "3"}),
         },
     )
+
+
+def test_glue_job_runs_one_at_a_time(template: Template) -> None:
+    """Two concurrent runs would race the atomic manifest swap and re-fetch the source."""
+    template.has_resource_properties(
+        "AWS::Glue::Job",
+        {"ExecutionProperty": {"MaxConcurrentRuns": 1}},
+    )
+
+
+def test_glue_job_receives_every_argument_the_script_requires(template: Template) -> None:
+    """`getResolvedOptions` raises on a missing argument, so the defaults must be complete.
+
+    Mirrors `REQUIRED_ARGS` in `oracle_pipeline.jobs.seminole_refresh`; the two drifting
+    apart is a deploy that succeeds and a job that dies on its first line.
+    """
+    job = next(iter(template.find_resources("AWS::Glue::Job").values()))
+    arguments = job["Properties"]["DefaultArguments"]
+    for argument in (
+        "--data_bucket",
+        "--run_id",
+        "--source_etag",
+        "--source_last_modified",
+        "--source_fingerprint",
+        "--snapshot_year",
+        "--target_env",
+    ):
+        assert argument in arguments, f"{argument} missing from DefaultArguments"
+
+
+def test_glue_job_installs_powertools_for_metrics(template: Template) -> None:
+    """Powertools is the only permitted metrics path and Glue 5.0 does not bundle it."""
+    job = next(iter(template.find_resources("AWS::Glue::Job").values()))
+    modules = job["Properties"]["DefaultArguments"]["--additional-python-modules"]
+    assert modules.startswith("aws-lambda-powertools==")
+
+
+def test_continuous_log_pattern_leaves_emf_parseable(template: Template) -> None:
+    """A log4j prefix on the EMF blob stops CloudWatch extracting the partition metrics."""
+    job = next(iter(template.find_resources("AWS::Glue::Job").values()))
+    arguments = job["Properties"]["DefaultArguments"]
+    assert arguments["--enable-continuous-cloudwatch-log"] == "true"
+    assert arguments["--continuous-log-conversionPattern"] == "%m%n"
 
 
 def test_glue_job_enables_metrics_and_continuous_logging(template: Template) -> None:

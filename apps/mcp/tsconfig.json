@@ -1,0 +1,4 @@
+{
+  "extends": "@oracle-seminole/tsconfig/node.json",
+  "include": ["src/**/*.ts"]
+}
