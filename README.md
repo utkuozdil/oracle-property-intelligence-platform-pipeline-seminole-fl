@@ -1,44 +1,66 @@
-# Oracle pipeline — Seminole County, FL
+# Seminole County property pipeline
 
-Ingests Seminole County property, permit, and enrichment data and publishes a snapshot the [Roofing CRM](https://github.com/prismteam-ai/roofing-crm) reads.
+Collects public Seminole County, Florida records and keeps them current so the [Roofing CRM](https://github.com/prismteam-ai/roofing-crm) can search them.
 
-**Live:** https://d1gfdmw7ud0jxj.cloudfront.net
+| | |
+| --- | --- |
+| **Live site** | https://d1gfdmw7ud0jxj.cloudfront.net |
+| **Used by** | [Roofing CRM](https://github.com/prismteam-ai/roofing-crm) |
+| **Role** | Data side — the CRM is the map and lead list |
 
-The SPA and API share that hostname (`/trpc` is the API).
+## What it does
 
-## What is published
+1. Gather county property records, permit history, and contractor reputation where it exists.
+2. Publish a searchable set the CRM reads.
+3. Show coverage on a live page so you can see what landed.
 
-- Parcel snapshot under `publish/` (181,218 parcels), pointed at by `publish/current.json`
-- Permit history under `publish/permits/`, pointed at by `publish/permits/current.json`
-- Status coverage is partial. `unknown` means the Click2Gov status page has not been harvested, not that the permit is closed.
+About **181,000 parcels** are in the published roll.
 
-The CRM is granted `publish/*` only. Do not point it at `raw/` or `staged/`.
+## Features
 
-## Layout
+| Feature | What you can do |
+| --- | --- |
+| Run summary | See what has loaded — properties, permits, contractors, incomplete sources |
+| Parcel search | Look up a property by address or parcel id |
+| Radius search | Nearby parcels by centre and distance (no sales filters) |
+| Owner view | Other parcels the same owner holds in the county |
+| Published roll | Addresses, owners, values, year built, coordinates |
 
-```
-apps/web             Vite + React run-summary UI
-apps/api             tRPC, harvest/publish jobs, TypeScript CDK
-packages/shared      keys, prefixes, service identity
-pipeline/            Python Glue CDK app (reads bucket/topic from SSM)
-```
+### Run summary
 
-Deploy TypeScript stacks first. Glue reads `/oracle-seminole/dev/data-bucket-name` and `/oracle-seminole/dev/operations-topic-arn`.
+| Shown | Purpose |
+| --- | --- |
+| Sources loaded | Properties, permits, contractors |
+| Incomplete sources | Anything still in progress |
+| Counts + last collected | Coverage without opening the CRM |
 
-## Commands
+Sources that never loaded stay off the main list.
 
-```sh
-just setup
-just test
-just type-check
-just deploy       # TypeScript, then Glue
-```
+### Parcel search
 
-Permit republish (needs DuckDB; no `just` recipe):
+| Step | Result |
+| --- | --- |
+| Search by address or parcel id | Matching properties |
+| Open a parcel | Ownership, value, year built, permit history for that lot |
 
-```sh
-DATA_BUCKET=… PERMIT_PUBLISH_WORK_DIR="$PWD/.publish-work/permits" \
-  pnpm --filter @oracle-seminole/api exec tsx src/publish/permit-cli.ts
-```
+### Radius search
 
-Account `795366345505`, region `us-east-2`.
+Same idea as the CRM map, without the sales filters.
+
+| Input | Result |
+| --- | --- |
+| Centre + distance | Nearby parcels |
+
+Use it to confirm coordinates are published and a neighbourhood is in the data.
+
+### Owner view
+
+Open an owner from a parcel → see the other parcels they hold in the county.
+
+### What gets collected
+
+| Source | What lands in the roll |
+| --- | --- |
+| County appraisal | Base property list the CRM searches |
+| Permit history | Type of work, dates, contractor, status when checked |
+| BBB | Rating matched to a contractor name, when a rating exists |
