@@ -1,9 +1,11 @@
 /**
  * Parser tests against two real captures.
  *
- * Both fixtures are unmodified responses from 2026-09-01, kept whole rather than trimmed:
- * the payload is one ~100 KB line and the false-positive markers that produced the earlier
- * "BBB is bot-protected" conclusion only exist in the full document.
+ * Both fixtures are 2026-09-01 BBB search captures, kept whole rather than trimmed: the
+ * payload is one ~100 KB line and the false-positive markers that produced the earlier
+ * "BBB is bot-protected" conclusion only exist in the full document. BBB's public Google
+ * Maps static-API key (and its URL signature) were replaced with placeholders so GitHub
+ * secret scanning does not treat a third-party embed as our credential.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
