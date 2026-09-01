@@ -1,0 +1,44 @@
+{
+  "name": "@oracle-seminole/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "synth": "cdk synth --strict",
+    "deploy": "cdk deploy --all --require-approval never"
+  },
+  "dependencies": {
+    "@aws-lambda-powertools/logger": "^2.35.0",
+    "@aws-lambda-powertools/metrics": "^2.35.0",
+    "@aws-lambda-powertools/tracer": "^2.35.0",
+    "@aws-sdk/client-dynamodb": "^3.1121.0",
+    "@aws-sdk/client-s3": "^3.1121.0",
+    "@aws-sdk/client-secrets-manager": "^3.1121.0",
+    "@aws-sdk/client-sqs": "^3.1121.0",
+    "@aws-sdk/lib-dynamodb": "^3.1121.0",
+    "@middy/core": "^7.9.2",
+    "@oracle-seminole/shared": "workspace:*",
+    "@trpc/server": "^11.18.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@oracle-seminole/tsconfig": "workspace:*",
+    "@types/aws-lambda": "^8.10.162",
+    "@types/node": "^26.4.0",
+    "aws-cdk-lib": "^2.267.0",
+    "aws-sdk-client-mock": "^4.1.0",
+    "constructs": "^10.8.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
+  }
+}

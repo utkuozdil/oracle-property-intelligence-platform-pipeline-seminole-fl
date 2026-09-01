@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.turbo/
+cdk.out/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage/
+
+# Python (pipeline/)
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+*.egg-info/

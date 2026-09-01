@@ -1,0 +1,9 @@
+node_modules/
+dist/
+cdk.out/
+coverage/
+pnpm-lock.yaml
+.turbo/
+
+# The Python tier is formatted by Ruff, not Prettier.
+pipeline/

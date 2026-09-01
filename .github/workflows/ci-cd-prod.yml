@@ -1,0 +1,20 @@
+name: PROD CI/CD
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  prod:
+    uses: Spring-Oaks-Capital-LLC/github-workflows/.github/workflows/ci-cd-prod.yml@main
+    with:
+      aws-region: 'us-east-2'
+      env-vars: |
+        TARGET_ENV=prod
+        CDK_BOOTSTRAP_QUALIFIER=hnb659fds
+    permissions:
+      id-token: write
+      contents: read

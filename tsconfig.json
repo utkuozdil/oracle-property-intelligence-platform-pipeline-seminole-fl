@@ -1,0 +1,5 @@
+{
+  "$comment": "Root config exists for editor tooling only. Each app/package owns its own tsconfig and is type-checked independently via `turbo run typecheck`.",
+  "extends": "./packages/tsconfig/base.json",
+  "files": []
+}

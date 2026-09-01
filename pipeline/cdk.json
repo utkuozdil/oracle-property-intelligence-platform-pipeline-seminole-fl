@@ -1,0 +1,15 @@
+{
+  "app": "uv run python -m oracle_pipeline_infra",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["cdk*.json", ".venv", "cdk.out", "**/__pycache__"]
+  },
+  "context": {
+    "@aws-cdk/core:bootstrapQualifier": "hnb659fds",
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target-partitions": ["aws"],
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true
+  }
+}

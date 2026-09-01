@@ -1,5 +1,113 @@
 # Oracle Property Intelligence Platform Pipeline - Seminole County, FL
 
+## Phase 0 — infrastructure scaffolding
+
+Phase 0 provisions the deployment surface, the pipeline skeleton, and the observability
+contract. There is **no business logic and no data processing yet**: county ingestion,
+reconciliation, DuckDB, and IPFS publication all arrive in later phases. The Phase 0
+exit criterion is a publicly reachable HTTPS URL.
+
+**Live URL:** https://d1gfdmw7ud0jxj.cloudfront.net
+
+CloudFront serves the SPA and the API from one origin, so the browser makes no
+cross-origin call and there is no API URL to inject at build time:
+
+| Path       | Origin                  |
+| ---------- | ----------------------- |
+| `/trpc/*`  | API Gateway HTTP API    |
+| everything | S3 (SPA, with fallback) |
+
+### Two toolchains, two CDK apps
+
+The serving tier is TypeScript; the Glue tier is Python. This is deliberate — the
+engineering guidelines permit Python for PySpark and Glue jobs, and a Python pipeline
+gets a Python CDK app. The Python tree lives outside `apps/` and `packages/` so the
+TypeScript workspace stays homogeneous.
+
+```
+apps/web             Vite + React SPA
+apps/api             tRPC router, pipeline Lambdas, and the TypeScript CDK app
+packages/api-client  AppRouter type + preconfigured httpBatchLink client
+packages/shared      service identity, metric names, DynamoDB keys, S3 prefixes
+packages/tsconfig    base / react / node compiler presets
+pipeline/            uv + Ruff + basedpyright + pytest; PySpark job and Python CDK app
+```
+
+The two CDK apps meet at SSM Parameter Store rather than at a hardcoded name. The
+TypeScript app owns the data bucket and the operations topic and publishes their
+identifiers; the Python app reads them. **Deploy TypeScript first.**
+
+| Parameter                                   | Owner      |
+| ------------------------------------------- | ---------- |
+| `/oracle-seminole/dev/data-bucket-name`     | TypeScript |
+| `/oracle-seminole/dev/operations-topic-arn` | TypeScript |
+| `/oracle-seminole/dev/table-name`           | TypeScript |
+
+### Stacks
+
+Deployed to account `795366345505`, region `us-east-2`, bootstrap qualifier `hnb659fds`.
+
+- **Core** — DynamoDB single table (on-demand), the data bucket with its
+  `raw/ staged/ publish/ manifests/` prefixes, the operations SNS topic, the stubbed
+  PagerDuty routing-key secret, and the alert notifier with its DLQ and alarm.
+- **Api** — the tRPC Lambda behind an API Gateway HTTP API.
+- **Pipeline** — the `SeminoleRefresh` and `PermitHarvest` state machines, the
+  permit-harvest queue, and its worker.
+- **Web** — the S3 site bucket, CloudFront with Origin Access Control, and the SPA
+  rewrite function.
+- **Glue** (Python app) — the stub PySpark job, its role, and an EventBridge rule that
+  routes terminal job states to the same operations topic the DLQ alarms use.
+
+### State machines
+
+Both run stub `Pass` and Lambda states only. Each wraps its body in a `Parallel` state
+so a single top-level `Catch` covers the whole workflow, routing to a PagerDuty task
+**before** the `Fail` state — Step Functions cannot attach a `Catch` to a state machine
+itself, only to a state.
+
+```
+SeminoleRefresh:  PrepareRun → RecordRunTask → PublishRunSummary
+PermitHarvest:    PlanHarvest → EnqueueParcelsTask → HarvestDispatched
+                                      └→ SQS → PermitHarvestWorker (+ DLQ + alarm)
+```
+
+`RecordRunTask` deliberately reads and writes nothing; the DynamoDB table is expected to
+be empty after a Phase 0 run. `EnqueueParcelsTask` does write to SQS, which is what
+exercises the queue, its consumer, its dead-letter queue, and the alarm on it.
+
+### Commands
+
+Every recipe covers both toolchains.
+
+```sh
+just setup       # pnpm install --frozen-lockfile + uv sync
+just format      # prettier --check + ruff format --check
+just lint        # eslint + ruff check
+just type-check  # tsc --noEmit + basedpyright
+just test        # vitest + pytest
+just build       # vite build, then cdk synth --strict for both apps
+just deploy      # build, then deploy TypeScript, then deploy Glue
+just destroy     # tear the environment down, Glue first
+```
+
+### Observability contract
+
+Every Lambda is a `NodejsFunction` with esbuild, `sourceMap: true`,
+`NODE_OPTIONS=--enable-source-maps`, X-Ray `tracing: ACTIVE`, and Powertools Logger,
+Tracer, and Metrics. Metrics are PascalCase with a `service` dimension and are emitted
+only through Powertools — never `putMetricData`. `observability/metrics.json` is the
+manifest to register with Lexicon and the Main Dashboard.
+
+Each async Lambda has an SQS DLQ carrying exactly one self-resolving alarm
+(`ApproximateNumberOfMessagesVisible`, `Maximum`, `> 0`, one evaluation period, missing
+data not breaching) wired to both `addAlarmAction` and `addOkAction` on the single
+operations topic.
+
+Every resource carries cost-allocation tags, and `project_name` equals the `service`
+dimension on `CostPredicted`, so forecast cost and billed cost join on one key. The Glue
+stub is capped at 2 × `G.1X` workers with a 30-minute timeout and no retries, so an
+idle Phase 0 environment costs essentially nothing.
+
 ## Context
 
 This repository is the **data gathering and ingestion pipeline** that supplies the [Roofing CRM & Lead Identification UI](https://github.com/prismteam-ai/roofing-crm). The CRM helps roofing companies explore properties in their service area, identify aging roofs and open roofing permits, and turn those signals into leads. This pipeline story covers collecting, loading, reconciling, and exposing the underlying property and permit datasets; the CRM UI/workflow itself is out of scope here.
@@ -19,9 +127,11 @@ The pipeline must demonstrate that data is ingested on an ongoing basis (not a o
 ## Acceptance Criteria
 
 ### Geography & coverage
+
 - Target **Seminole County, FL** as the default and primary county for ingestion and demos.
 
 ### Data loading
+
 - Run the Oracle pipeline until all available county data is uploaded.
 - Load available property records into the database.
 - Load available permit records into the database, with emphasis on **roofing-related permits**.
@@ -40,6 +150,7 @@ The pipeline must demonstrate that data is ingested on an ongoing basis (not a o
   - Demonstrate that data continues to be ingested and published over time (multiple runs or simulated ongoing updates).
 
 ### Infrastructure & access
+
 - Optimize pipeline performance where feasible.
 - Identify slow source sites or constrained data sources.
 - Document pipeline speed limitations and source constraints.
@@ -51,6 +162,7 @@ The pipeline must demonstrate that data is ingested on an ongoing basis (not a o
 - Provide a UI for exploring the uploaded data.
 
 ### Roofing CRM–supporting queries
+
 - Support radius-based property identification using coordinates (around a GPS point or map pin).
 - Support questions about properties with roofs older than 15 years (or a configurable age threshold).
 - Support questions about properties with **open roofing permits**, including those that have remained open for many years.
@@ -60,6 +172,7 @@ The pipeline must demonstrate that data is ingested on an ongoing basis (not a o
 - Return source-backed answers where source data is available.
 
 ### Demonstration
+
 - Demonstrate the uploaded dataset through the UI.
 - Demonstrate the uploaded dataset through an agent query aligned to roofing lead discovery.
 - Demonstrate that Oracle can operate without carrying the infrastructure cost.
@@ -67,6 +180,7 @@ The pipeline must demonstrate that data is ingested on an ongoing basis (not a o
 - Pass the demo using real uploaded Seminole County records.
 
 ## Demo Transcript
+
 - Presenter: “I will demonstrate that the Oracle pipeline has loaded the available dataset for Seminole County, Florida that the data is queryable through DuckDB, that eligible artifacts are stored through IPFS, and that both the UI and agent can answer property intelligence questions that support roofing lead generation.”
 - Presenter: “First, I am opening the pipeline run summary.”
   - Expected Result: The system displays the completed pipeline run, source list, county coverage, record counts, timestamps, and any documented source limitations.
@@ -89,10 +203,12 @@ The pipeline must demonstrate that data is ingested on an ongoing basis (not a o
   - Expected Result: The system demonstrates an MCP-ready interface or documented MCP-compatible query structure that agents and the roofing CRM can use without changing the data model.
 
 ## Out of Scope
+
 - Roofing CRM UI, map pin/GPS interaction design, and lead outreach workflows (covered in [roofing-crm](https://github.com/prismteam-ai/roofing-crm)).
 - Live outbound messaging to property owners.
 
 ## Reference
+
 - [Roofing CRM & Lead Identification UI](https://github.com/prismteam-ai/roofing-crm)
 - [Soofi XYZ Team Kit](https://github.com/soofi-xyz/soofi-xyz-team-kit)
 - [Elephant Oracle Skills](https://github.com/elephant-xyz/skills)

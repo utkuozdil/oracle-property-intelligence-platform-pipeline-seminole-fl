@@ -1,0 +1,64 @@
+[project]
+name = "oracle-pipeline"
+version = "0.0.0"
+description = "PySpark/AWS Glue tier for the Oracle Seminole County property intelligence pipeline, plus the Python CDK app that owns it"
+requires-python = ">=3.12"
+dependencies = [
+    "aws-cdk-lib>=2.267.0",
+    "constructs>=10.0.0,<11.0.0",
+    "boto3>=1.35.0",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.31.0",
+    "ruff>=0.13.0",
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "moto[s3]>=5.0.0",
+    "boto3-stubs[s3]>=1.35.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oracle_pipeline", "src/oracle_pipeline_infra"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "A",    # builtin shadowing
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "TID",  # tidy imports
+    "RUF",
+]
+
+[tool.basedpyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+# `standard` rather than `recommended`: the Glue runtime supplies `awsglue` and
+# `pyspark` as untyped modules, and `recommended` would turn every interaction with
+# them into an error that could only be silenced wholesale.
+typeCheckingMode = "standard"
+reportMissingTypeStubs = "warning"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/oracle_pipeline/jobs/*"]

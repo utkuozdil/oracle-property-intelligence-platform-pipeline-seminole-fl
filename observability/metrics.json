@@ -1,0 +1,116 @@
+{
+  "$comment": "Staging manifest for the Lexicon `cloudwatch-metrics.json` registration and the Main Dashboard widgets. Every metric emitted by this service appears here. The Lexicon and Dashboard repositories live in another GitHub organisation and could not be updated from this workspace — see the Phase 0 notes in README.md.",
+  "service": "oracle-seminole",
+  "namespace": "OracleSeminole",
+  "dimensions": ["service", "environment"],
+  "metrics": [
+    {
+      "name": "RequestProcessed",
+      "unit": "Count",
+      "description": "A tRPC request served successfully by the API Lambda.",
+      "emittedBy": "apps/api/src/handler.ts"
+    },
+    {
+      "name": "RequestFailed",
+      "unit": "Count",
+      "description": "A tRPC request that threw out of the Lambda handler.",
+      "emittedBy": "apps/api/src/handler.ts"
+    },
+    {
+      "name": "AlertProcessed",
+      "unit": "Count",
+      "description": "A PagerDuty trigger accepted (HTTP 202) or suppressed by environment gating.",
+      "emittedBy": "apps/api/src/pagerduty/notifier.ts"
+    },
+    {
+      "name": "AlertFailed",
+      "unit": "Count",
+      "description": "A PagerDuty trigger that PagerDuty did not accept.",
+      "emittedBy": "apps/api/src/pagerduty/notifier.ts"
+    },
+    {
+      "name": "RunProcessed",
+      "unit": "Count",
+      "description": "An ingestion run recorded by the SeminoleRefresh state machine.",
+      "emittedBy": "apps/api/src/pipeline/record-run.ts"
+    },
+    {
+      "name": "RunFailed",
+      "unit": "Count",
+      "description": "An ingestion run that failed during bookkeeping.",
+      "emittedBy": "apps/api/src/pipeline/record-run.ts"
+    },
+    {
+      "name": "ParcelProcessed",
+      "unit": "Count",
+      "description": "A parcel dispatched to the permit-harvest queue.",
+      "emittedBy": "apps/api/src/pipeline/enqueue-parcels.ts"
+    },
+    {
+      "name": "ParcelFailed",
+      "unit": "Count",
+      "description": "A parcel that could not be dispatched.",
+      "emittedBy": "apps/api/src/pipeline/enqueue-parcels.ts"
+    },
+    {
+      "name": "PermitProcessed",
+      "unit": "Count",
+      "description": "A permit-harvest message handled by the queue worker.",
+      "emittedBy": "apps/api/src/pipeline/permit-worker.ts"
+    },
+    {
+      "name": "PermitFailed",
+      "unit": "Count",
+      "description": "A permit-harvest message that failed and will be retried or redriven.",
+      "emittedBy": "apps/api/src/pipeline/permit-worker.ts"
+    },
+    {
+      "name": "ProcessingDuration",
+      "unit": "Milliseconds",
+      "description": "Wall-clock duration of one unit of work.",
+      "emittedBy": "apps/api/src/observability.ts"
+    },
+    {
+      "name": "CostPredicted",
+      "unit": "None",
+      "description": "Forecast USD cost of one invocation, joinable against the project_name cost-allocation tag.",
+      "emittedBy": "apps/api/src/observability.ts"
+    }
+  ],
+  "alarms": [
+    {
+      "name": "oracle-seminole-dev-alert-notifier-dlq-not-empty",
+      "metric": "ApproximateNumberOfMessagesVisible",
+      "namespace": "AWS/SQS",
+      "statistic": "Maximum",
+      "comparison": "GreaterThanThreshold",
+      "threshold": 0,
+      "evaluationPeriods": 1,
+      "treatMissingData": "notBreaching",
+      "selfResolving": true,
+      "channels": ["sns:operations-topic"]
+    },
+    {
+      "name": "oracle-seminole-dev-permit-harvest-dlq-not-empty",
+      "metric": "ApproximateNumberOfMessagesVisible",
+      "namespace": "AWS/SQS",
+      "statistic": "Maximum",
+      "comparison": "GreaterThanThreshold",
+      "threshold": 0,
+      "evaluationPeriods": 1,
+      "treatMissingData": "notBreaching",
+      "selfResolving": true,
+      "channels": ["sns:operations-topic"]
+    }
+  ],
+  "eventRules": [
+    {
+      "name": "SeminoleRefreshFailed",
+      "source": "aws.glue",
+      "detailType": "Glue Job State Change",
+      "states": ["FAILED", "TIMEOUT", "ERROR", "STOPPED"],
+      "channels": ["sns:operations-topic"],
+      "definedBy": "pipeline/src/oracle_pipeline_infra/glue_stack.py"
+    }
+  ]
+}
