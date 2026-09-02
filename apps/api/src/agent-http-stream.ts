@@ -22,6 +22,16 @@ export function encodeAgentEvent(event: AgentClientEvent): string {
   return `${JSON.stringify(event)}\n`;
 }
 
+/**
+ * Body metadata only. The Function URL already injects CORS; a second
+ * `Access-Control-Allow-Origin` makes browsers reject the stream and the SPA
+ * falls back to the buffered `ask` mutation.
+ */
+export const AGENT_STREAM_RESPONSE_HEADERS = {
+  'content-type': 'application/x-ndjson; charset=utf-8',
+  'cache-control': 'no-cache',
+} as const;
+
 export async function* iterateAgentAsk(input: {
   question: string;
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -92,12 +102,7 @@ export async function writeAgentNdjson(
 ): Promise<void> {
   const http = awslambda.HttpResponseStream.from(responseStream, {
     statusCode: 200,
-    headers: {
-      'content-type': 'application/x-ndjson; charset=utf-8',
-      'cache-control': 'no-cache',
-      'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'content-type,accept',
-    },
+    headers: { ...AGENT_STREAM_RESPONSE_HEADERS },
   });
 
   try {

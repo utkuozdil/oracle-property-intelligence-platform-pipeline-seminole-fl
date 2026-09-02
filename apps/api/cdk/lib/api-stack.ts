@@ -6,6 +6,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import type * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type { Construct } from 'constructs';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { ObservableFunction } from './constructs/observable-function';
 
 export const NLQ_MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -39,6 +40,12 @@ export class ApiStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
+    const servingEnv = {
+      TABLE_NAME: props.table.tableName,
+      DATA_BUCKET_NAME: props.dataBucket.bucketName,
+      NLQ_MODEL_ID,
+    };
+
     const trpcHandler = new ObservableFunction(this, 'TrpcHandler', {
       entry: 'src/handler.ts',
       description: `${SERVICE_NAME} tRPC API`,
@@ -53,25 +60,49 @@ export class ApiStack extends cdk.Stack {
        */
       memorySize: 2048,
       timeout: cdk.Duration.seconds(30),
-      environment: {
-        TABLE_NAME: props.table.tableName,
-        DATA_BUCKET_NAME: props.dataBucket.bucketName,
-        NLQ_MODEL_ID,
-      },
+      environment: servingEnv,
     });
 
-    props.table.grantReadWriteData(trpcHandler);
-    props.dataBucket.grantRead(trpcHandler);
+    /**
+     * Bedrock tokens over a Function URL. API Gateway buffers the whole response, so
+     * the stream cannot share the `/trpc` route.
+     */
+    const agentStream = new ObservableFunction(this, 'AgentStream', {
+      entry: 'src/handler.ts',
+      handler: 'stream',
+      description: `${SERVICE_NAME} agent NDJSON stream`,
+      serviceName: SERVICE_NAME,
+      metricsNamespace: METRICS_NAMESPACE,
+      targetEnv: props.targetEnv,
+      memorySize: 2048,
+      timeout: cdk.Duration.seconds(45),
+      environment: servingEnv,
+    });
 
-    trpcHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['bedrock:InvokeModel'],
-        resources: [
-          `arn:aws:bedrock:*::foundation-model/${NLQ_MODEL_ID.replace(/^us\./, '')}`,
-          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${NLQ_MODEL_ID}`,
-        ],
-      }),
-    );
+    const agentStreamUrl = agentStream.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: ['*'],
+        allowedMethods: [lambda.HttpMethod.POST],
+        allowedHeaders: ['content-type', 'accept'],
+      },
+    });
+    trpcHandler.addEnvironment('AGENT_STREAM_URL', agentStreamUrl.url);
+
+    const bedrock = new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      resources: [
+        `arn:aws:bedrock:*::foundation-model/${NLQ_MODEL_ID.replace(/^us\./, '')}`,
+        `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${NLQ_MODEL_ID}`,
+      ],
+    });
+
+    for (const fn of [trpcHandler, agentStream]) {
+      props.table.grantReadWriteData(fn);
+      props.dataBucket.grantRead(fn);
+      fn.addToRolePolicy(bedrock);
+    }
 
     this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
       apiName: `${SERVICE_NAME}-${props.targetEnv}-api`,
@@ -104,6 +135,10 @@ export class ApiStack extends cdk.Stack {
       });
     }
 
+    new cdk.CfnOutput(this, 'AgentStreamUrl', {
+      value: agentStreamUrl.url,
+      description: 'NDJSON Function URL for the Oracle agent. The SPA reads it from agent.examples.',
+    });
     new cdk.CfnOutput(this, 'HttpApiId', { value: this.httpApi.apiId });
     new cdk.CfnOutput(this, 'HttpApiEndpoint', {
       value: domainConfig

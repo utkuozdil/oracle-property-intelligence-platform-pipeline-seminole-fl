@@ -202,15 +202,22 @@ describe('PagerDuty routing key', () => {
 });
 
 describe('the tRPC API', () => {
-  it('is fronted by an API Gateway HTTP API, not a Lambda function URL', () => {
+  it('is fronted by an API Gateway HTTP API; the agent stream is a Function URL', () => {
     apiTemplate.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
-    apiTemplate.resourceCountIs('AWS::Lambda::Url', 0);
+    apiTemplate.resourceCountIs('AWS::Lambda::Url', 1);
     apiTemplate.hasResourceProperties('AWS::ApiGatewayV2::Route', {
       RouteKey: 'ANY /trpc/{proxy+}',
     });
+    apiTemplate.hasResourceProperties('AWS::Lambda::Url', {
+      AuthType: 'NONE',
+      InvokeMode: 'RESPONSE_STREAM',
+    });
+    apiTemplate.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ AGENT_STREAM_URL: Match.anyValue() }) },
+    });
   });
 
-  it('configures the agent model and grants Bedrock invoke', () => {
+  it('configures the agent model and grants Bedrock invoke and stream', () => {
     apiTemplate.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({ NLQ_MODEL_ID }) },
     });
@@ -218,7 +225,10 @@ describe('the tRPC API', () => {
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
           Match.objectLike({
-            Action: 'bedrock:InvokeModel',
+            Action: Match.arrayWith([
+              'bedrock:InvokeModel',
+              'bedrock:InvokeModelWithResponseStream',
+            ]),
             Resource: Match.arrayWith([Match.stringLikeRegexp('foundation-model')]),
           }),
         ]),

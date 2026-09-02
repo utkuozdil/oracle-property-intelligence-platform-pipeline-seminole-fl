@@ -20,6 +20,8 @@ export interface ObservableFunctionProps {
   deadLetterQueue?: sqs.IQueue;
   /** Hard ceiling on concurrent executions, used to throttle a rate-sensitive target. */
   reservedConcurrentExecutions?: number;
+  /** Exported function name. Defaults to `handler`. */
+  handler?: string;
 }
 
 /**
@@ -52,7 +54,7 @@ export class ObservableFunction extends nodejs.NodejsFunction {
   constructor(scope: Construct, id: string, props: ObservableFunctionProps) {
     super(scope, id, {
       entry: props.entry,
-      handler: 'handler',
+      handler: props.handler ?? 'handler',
       description: props.description,
       runtime: lambda.Runtime.NODEJS_22_X,
       architecture: lambda.Architecture.X86_64,

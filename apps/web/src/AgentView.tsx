@@ -128,7 +128,8 @@ export function AgentView({
             if (event.type === 'status') setLiveStatus(event.message);
             if (event.type === 'text') setLiveText((current) => current + event.text);
           })) as AskResponse;
-        } catch {
+        } catch (error: unknown) {
+          console.error('oracle agent stream failed; using buffered ask', error);
           setLiveStatus('Searching the snapshot…');
           response = await api.agent.ask.mutate(input);
         }

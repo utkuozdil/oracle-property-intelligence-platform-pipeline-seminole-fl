@@ -11,5 +11,9 @@ describe('AGENT_SYSTEM_PROMPT', () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/follow-up/i);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/contractor/i);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/unknown/i);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/markdown table/i);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/reasoning/i);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/evidence/i);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/assumptions or missing data/i);
   });
 });
