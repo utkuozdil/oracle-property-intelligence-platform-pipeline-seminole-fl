@@ -1,11 +1,11 @@
 /**
- * One agent turn: system prompt + tools + Bedrock, streamed.
+ * One agent turn: ToolLoopAgent + Bedrock, streamed.
  *
  * The model may call `list_places` / `search_parcels`. Rows come only from those tools.
  * Tokens are yielded as they arrive so the chat can paint them.
  */
 
-import { streamText, stepCountIs, type LanguageModel, type ModelMessage } from 'ai';
+import { ToolLoopAgent, stepCountIs, type LanguageModel, type ModelMessage } from 'ai';
 import { AGENT_SYSTEM_PROMPT } from './agent-prompt';
 import {
   createAgentTools,
@@ -60,15 +60,18 @@ export async function* streamAgentTurn(
     { role: 'user' as const, content: context.question },
   ];
 
-  const result = streamText({
+  const agent = new ToolLoopAgent({
+    id: 'oracle-seminole',
     model,
-    system: AGENT_SYSTEM_PROMPT,
-    messages,
+    instructions: AGENT_SYSTEM_PROMPT,
     tools,
     stopWhen: stepCountIs(4),
     temperature: 0,
     maxOutputTokens: 700,
     maxRetries: 1,
+  });
+  const result = await agent.stream({
+    messages,
     abortSignal: AbortSignal.timeout(18_000),
   });
 

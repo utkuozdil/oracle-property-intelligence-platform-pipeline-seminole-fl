@@ -51,6 +51,7 @@ export interface PlanSweepOutput {
     toMonth: string;
     applicationTypes: string[];
     censusOnly: boolean;
+    statusOnly: boolean;
     statusWindowMonths: number;
     statusPermitLimit: number;
     statusFromMonth: string;
@@ -139,11 +140,14 @@ async function baseHandler(event: PlanSweepInput): Promise<PlanSweepOutput> {
   }
 
   const applicationTypes = request.applicationTypes ?? [ALL_TYPES_CODE];
+  const statusOnly = request.statusOnly === true;
   const months = monthsBetween(fromMonth, toMonth);
   const shards: CensusShard[] = [];
-  for (const applicationType of applicationTypes) {
-    for (const month of months) {
-      shards.push({ runId: event.runId, applicationType, month, ...monthBounds(month) });
+  if (!statusOnly) {
+    for (const applicationType of applicationTypes) {
+      for (const month of months) {
+        shards.push({ runId: event.runId, applicationType, month, ...monthBounds(month) });
+      }
     }
   }
 
@@ -168,14 +172,16 @@ async function baseHandler(event: PlanSweepInput): Promise<PlanSweepOutput> {
       ? `${DATA_HORIZON_YEAR}-01`
       : shiftMonths(toMonth, -(statusWindowMonths - 1)));
 
-  const waiting = request.ignoreMaintenanceWindow !== true && insideMaintenanceWindow(now);
+  const waiting =
+    !statusOnly && request.ignoreMaintenanceWindow !== true && insideMaintenanceWindow(now);
   const plan: PlanSweepOutput = {
     runId: event.runId,
     scope: {
       fromMonth,
       toMonth,
       applicationTypes,
-      censusOnly: request.censusOnly ?? false,
+      censusOnly: statusOnly ? false : (request.censusOnly ?? false),
+      statusOnly,
       statusWindowMonths,
       statusPermitLimit,
       statusFromMonth,

@@ -160,6 +160,13 @@ export const REQUEST_TIMEOUT_MS = 45_000;
 export const MAX_REQUEST_ATTEMPTS = 3;
 
 /**
+ * Operator-driver wait when Click2Gov serves its error page or the host is unreachable.
+ * Short in-request retries already ran; this is the long pause so we do not hammer a
+ * down portal every 45 seconds and burn the overnight supervisor's restart budget.
+ */
+export const SOURCE_B_UNAVAILABLE_RETRY_MS = 20 * 60 * 1000;
+
+/**
  * F5 ASM block signatures. On any of these the worker stops immediately rather than
  * retrying into a sticky IP ban.
  */

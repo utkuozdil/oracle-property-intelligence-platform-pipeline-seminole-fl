@@ -3,7 +3,12 @@ import { MetricUnit } from '@aws-lambda-powertools/metrics';
 import { logMetrics } from '@aws-lambda-powertools/metrics/middleware';
 import { captureLambdaHandler } from '@aws-lambda-powertools/tracer/middleware';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import middy from '@middy/core';
 import {
@@ -11,6 +16,7 @@ import {
   COUNTY,
   METRIC_ITEMS,
   runKey,
+  runManifestKey,
   SOURCE_NAME,
   STAGED_PARCELS_PREFIX,
 } from '@oracle-seminole/shared';
@@ -77,6 +83,9 @@ export interface RecordRunInput {
   skipped?: boolean;
   skipReason?: string | null;
   sourceEtag?: string;
+  sourceLastModified?: string;
+  /** Execution start, so a skip still has a visible window on the run summary. */
+  startedAt?: string;
   /**
    * The execution's raw input, from which the publish decision is read.
    *
@@ -103,6 +112,23 @@ export interface RecordRunOutput {
 
 class TransformOutputError extends Error {
   override readonly name = 'TransformOutputError';
+}
+
+/** What a skipped nightly refresh writes so the run summary can list it. */
+export function skippedRunManifest(event: RecordRunInput, recordedAt: string): Record<string, unknown> {
+  return {
+    runId: event.runId,
+    county: COUNTY,
+    phase: 'phase-1',
+    status: 'SKIPPED',
+    skipReason: event.skipReason ?? 'skipped',
+    startedAt: event.startedAt ?? recordedAt,
+    finishedAt: recordedAt,
+    sources: ['scpa-cama'],
+    sourceEtag: event.sourceEtag ?? null,
+    sourceLastModified: event.sourceLastModified ?? null,
+    publishDecision: `no new snapshot (${event.skipReason ?? 'skipped'})`,
+  };
 }
 
 async function readChangeSet(runId: string): Promise<ChangeSet> {
@@ -161,10 +187,39 @@ async function baseHandler(event: RecordRunInput): Promise<RecordRunOutput> {
     const recordedAt = new Date().toISOString();
 
     // A skipped run is a successful outcome, not a failure: the source had not changed.
+    // It still has to leave a manifest — otherwise the run summary cannot show that
+    // the nightly schedule fired and stood down on the same ETag.
     if (event.skipped) {
-      logger.info('Run skipped; nothing to record', {
+      const manifest = skippedRunManifest(event, recordedAt);
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: DATA_BUCKET,
+          Key: runManifestKey(event.runId),
+          Body: JSON.stringify(manifest, null, 2),
+          ContentType: 'application/json',
+        }),
+      );
+      await ddb.send(
+        new PutCommand({
+          TableName: TABLE_NAME,
+          Item: {
+            ...runKey(event.runId),
+            county: COUNTY,
+            phase: 'phase-1',
+            status: 'SKIPPED',
+            skipReason: event.skipReason ?? 'skipped',
+            sourceEtag: event.sourceEtag,
+            sourceLastModified: event.sourceLastModified,
+            startedAt: event.startedAt ?? recordedAt,
+            finishedAt: recordedAt,
+            recordedAt,
+          },
+        }),
+      );
+      logger.info('Recorded skipped run', {
         runId: event.runId,
         skipReason: event.skipReason,
+        sourceEtag: event.sourceEtag,
       });
       return {
         runId: event.runId,
@@ -174,8 +229,6 @@ async function baseHandler(event: RecordRunInput): Promise<RecordRunOutput> {
         partitionCount: 0,
         counts: null,
         publishApproved: false,
-        // There is no new snapshot to publish, so this is not a withheld publish and
-        // does not need announcing — the previous snapshot is still the current one.
         publishDecision: `no new snapshot (${event.skipReason ?? 'skipped'})`,
         recordedAt,
       };

@@ -325,6 +325,7 @@ describe('the SeminoleRefresh transform step', () => {
     const definition = refreshDefinition();
     expect(definition).toContain('SourceChanged?');
     expect(definition).toContain('RecordSkippedRun');
+    expect(definition).toContain('sourceEtag');
   });
 });
 

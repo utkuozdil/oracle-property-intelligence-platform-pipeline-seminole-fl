@@ -26,6 +26,8 @@ export interface ReconcileStatusInput {
 
 export interface ReconcileStatusOutput {
   runId: string;
+  /** When this sweep closed. The run-summary Collected column uses this, not the last batch. */
+  finishedAt: string;
   batchesLanded: number;
   permitsLanded: number;
   openPermits: number;
@@ -289,6 +291,7 @@ export async function reconcileStatusRun(
 
   const summary: ReconcileStatusOutput = {
     runId: event.runId,
+    finishedAt: new Date().toISOString(),
     batchesLanded: recordKeys.length,
     permitsLanded: records.length,
     openPermits: records.filter((record) => !record.terminal).length,

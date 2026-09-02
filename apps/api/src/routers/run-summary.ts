@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { logger } from '../observability';
-import { DATA_BUCKET, getJson, listObjects, listPrefixes } from './s3-json';
+import {
+  latestStatusCompletion,
+  latestTimestamp,
+  permitStatusSourceState,
+} from './permit-status-source';
+import { DATA_BUCKET, getJson, getJsonRecord, listObjects, listPrefixes } from './s3-json';
 
 /**
  * The pipeline run summary, assembled from the manifests the ingestion phases write.
@@ -54,6 +59,12 @@ const RunManifestSchema = z
     stagedPath: looseString,
     changeSetKey: looseString,
     reconciliationKey: looseString,
+    status: looseString,
+    skipReason: looseString,
+    sourceEtag: looseString,
+    sourceLastModified: looseString,
+    sourceUrl: looseString,
+    publishDecision: looseString,
   })
   .loose();
 type RunManifest = z.infer<typeof RunManifestSchema>;
@@ -216,6 +227,31 @@ type LandedPointers = {
   fdor: z.infer<typeof FdorPointerSchema> | null;
 };
 
+const StatusSummarySchema = z
+  .object({
+    runId: looseString,
+    finishedAt: looseString,
+    permitsLanded: looseNumber,
+    batchesLanded: looseNumber,
+  })
+  .loose();
+
+const StatusProgressSchema = z
+  .object({
+    runId: looseString,
+    updatedAt: looseString,
+    lastBatchIndex: looseNumber,
+    permitsLanded: looseNumber,
+    batchesLanded: looseNumber,
+  })
+  .loose();
+
+const LongOpenSchema = z
+  .object({
+    permitsKnown: looseNumber,
+  })
+  .loose();
+
 const PermitCoverageSchema = z
   .object({
     runId: looseString,
@@ -252,7 +288,10 @@ export interface SourceEntry {
   records: number | null;
   /** What `records` counts, so a number is never ambiguous. */
   recordUnit: string | null;
-  /** When the upstream data was collected, from the artifact — not the request time. */
+  /**
+   * When this landing finished. For the county file that is the refresh finish,
+   * not the ZIP Last-Modified (those can be hours apart).
+   */
   collectedAt: string | null;
   role: string;
   cadence: string;
@@ -273,6 +312,9 @@ export interface Limitation {
 export interface RunHistoryEntry {
   runId: string;
   phase: string | null;
+  /** `skipped` is a successful nightly check that did not publish a new snapshot. */
+  status: 'completed' | 'skipped';
+  skipReason: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
@@ -385,7 +427,17 @@ export interface RunSummary {
       limitation: string | null;
     } | null;
     joinRate: number | null;
+    /** Census finish time only — status batches must not move this. */
     collectedAt: string | null;
+    /** Last finished status sweep. In-flight batches do not move this. */
+    statusCollectedAt: string | null;
+    /** Status-row status, cadence, and records — completed sweeps only update Collected. */
+    statusSource: {
+      status: SourceStatus;
+      collectedAt: string | null;
+      records: number | null;
+      cadence: string;
+    };
     /** Status refresh writes one NDJSON object per batch; this counts them. */
     statusBatchObjects: number | null;
   } | null;
@@ -537,9 +589,13 @@ function toHistoryEntry(
   const counts = changeSet?.counts;
   const totals = changeSet?.totals;
 
+  const skipped = (manifest?.status ?? '').toUpperCase() === 'SKIPPED';
+
   return {
     runId: manifest?.runId ?? changeSet?.runId ?? run.runId,
     phase: manifest?.phase ?? null,
+    status: skipped ? 'skipped' : 'completed',
+    skipReason: manifest?.skipReason ?? null,
     startedAt,
     finishedAt,
     durationMs: durationBetween(startedAt, finishedAt),
@@ -563,14 +619,21 @@ function toHistoryEntry(
             parcelCountChange: null,
           },
     upstream:
-      changeSet?.source === undefined
-        ? null
-        : {
+      changeSet?.source !== undefined
+        ? {
             url: changeSet.source.url ?? null,
             etag: changeSet.source.etag ?? null,
             lastModified: toIso(changeSet.source.lastModified),
             fingerprint: changeSet.source.fingerprint ?? null,
-          },
+          }
+        : manifest?.sourceEtag !== undefined && manifest.sourceEtag !== ''
+          ? {
+              url: manifest.sourceUrl ?? null,
+              etag: manifest.sourceEtag ?? null,
+              lastModified: toIso(manifest.sourceLastModified),
+              fingerprint: null,
+            }
+          : null,
     output:
       changeSet?.output === undefined
         ? null
@@ -639,15 +702,68 @@ async function readPermits(): Promise<RunSummary['permits']> {
   const coverage =
     best.coverage ?? slices.find((slice) => slice.coverage !== null)?.coverage ?? null;
 
-  const [censusObjects, statusObjects] = await Promise.all([
-    listObjects('staged/permits/census/', 400),
-    listObjects('staged/permits/status/', 400),
+  const [censusObjects, statusObjects, censusSummaryTimes, parsedSummaries, progressCounts, longOpen] =
+    await Promise.all([
+      listObjects('staged/permits/census/', 400),
+      listObjects('staged/permits/status/', 2000),
+      Promise.all(
+        slicePrefixes.map(async (prefix) => {
+          const record = await getJsonRecord(`${prefix}census-summary.json`);
+          return record?.lastModified ?? null;
+        }),
+      ),
+      Promise.all(
+        slicePrefixes.map(async (prefix) => {
+          const record = await getJsonRecord(`${prefix}status-summary.json`);
+          if (record === null) return null;
+          const parsed = StatusSummarySchema.safeParse(record.value);
+          if (!parsed.success) return null;
+          return {
+            lastModified: record.lastModified,
+            finishedAt: parsed.data.finishedAt ?? null,
+            permitsLanded: nullableNumber(parsed.data.permitsLanded),
+          };
+        }),
+      ),
+      Promise.all(
+        slicePrefixes.map(async (prefix) => {
+          const raw = await getJson(`${prefix}status-progress.json`);
+          if (raw === null) return null;
+          const parsed = StatusProgressSchema.safeParse(raw);
+          return parsed.success ? nullableNumber(parsed.data.permitsLanded) : null;
+        }),
+      ),
+      getJson('manifests/permits/long-open-roofing.json'),
+    ]);
+  const collectedAt = latestTimestamp([
+    ...censusObjects.map((object) => object.lastModified),
+    ...censusSummaryTimes,
   ]);
-  const collectedAt = [...censusObjects, ...statusObjects]
-    .map((object) => object.lastModified)
-    .filter((value): value is string => value !== null)
-    .sort()
-    .at(-1);
+  const statusCompletion = latestStatusCompletion(
+    parsedSummaries.filter((summary): summary is NonNullable<typeof summary> => summary !== null),
+  );
+  const latestStatusBatchAt = latestTimestamp(statusObjects.map((object) => object.lastModified));
+  const progressHarvested = progressCounts.reduce<number | null>((max, count) => {
+    if (count === null) return max;
+    if (max === null || count > max) return count;
+    return max;
+  }, null);
+  const knownParsed = LongOpenSchema.safeParse(longOpen);
+  const knownHarvested = knownParsed.success ? nullableNumber(knownParsed.data.permitsKnown) : null;
+  const harvestedRecords = [progressHarvested, statusCompletion.records, knownHarvested].reduce<
+    number | null
+  >((max, count) => {
+    if (count === null) return max;
+    if (max === null || count > max) return count;
+    return max;
+  }, null);
+  const statusSource = permitStatusSourceState({
+    statusBatchCount: statusObjects.length === 0 ? null : statusObjects.length,
+    latestStatusBatchAt,
+    lastCompletedAt: statusCompletion.completedAt,
+    lastCompletedRecords: statusCompletion.records,
+    harvestedRecords,
+  });
 
   return {
     status: coverage === null ? 'in-progress' : 'ingested',
@@ -690,6 +806,8 @@ async function readPermits(): Promise<RunSummary['permits']> {
           },
     joinRate: nullableNumber(best.summary?.parcelMatch?.joinRate),
     collectedAt: collectedAt ?? null,
+    statusCollectedAt: statusSource.collectedAt,
+    statusSource,
     statusBatchObjects: statusObjects.length === 0 ? null : statusObjects.length,
   };
 }
@@ -899,7 +1017,7 @@ function buildSources(
       status: current === null ? 'not-ingested' : 'ingested',
       records: recordCount('Parcels.csv') ?? current?.parcelCount ?? null,
       recordUnit: 'parcels',
-      collectedAt: countyFileAt,
+      collectedAt: current?.finishedAt ?? countyFileAt,
       role: 'Parcels, buildings, sales, owners, and map points',
       cadence: 'Updated every night',
       provenance: countyFileUrl,
@@ -948,20 +1066,18 @@ function buildSources(
       id: 'permit-status',
       label: 'Permit status',
       category: 'permit',
-      status:
-        permits === null
-          ? 'not-ingested'
-          : permits.statusBatchObjects === null
-            ? 'not-ingested'
-            : 'in-progress',
-      records: null,
+      status: permits?.statusSource.status ?? 'not-ingested',
+      records: permits?.statusSource.records ?? null,
       recordUnit: 'permits checked',
-      collectedAt: permits?.collectedAt ?? null,
+      collectedAt: permits?.statusSource.collectedAt ?? null,
       role: 'Whether a permit is still open',
-      cadence: 'Still being collected',
+      cadence: permits?.statusSource.cadence ?? 'Still being collected',
       provenance: 'https://semc-egov.aspgov.com/Click2GovBP/selectpermit.html',
       artifactPrefix: 'staged/permits/status/',
-      notes: 'Looked up one application at a time. Not finished for the full history.',
+      notes:
+        permits?.statusSource.status === 'ingested'
+          ? 'Looked up one application at a time.'
+          : 'Looked up one application at a time. Not finished for the full history.',
     },
     {
       id: 'dbpr-licences',
@@ -1106,9 +1222,12 @@ async function buildRunSummary(options: RunSummaryOptions): Promise<RunSummary> 
   }
 
   const current =
-    runs.find((run) => run.runId === (currentManifest?.runId ?? publishedRunId)) ??
+    runs.find(
+      (run) =>
+        run.status !== 'skipped' && run.runId === (currentManifest?.runId ?? publishedRunId),
+    ) ??
     runs.find((run) => run.isPublished) ??
-    runs[0] ??
+    runs.find((run) => run.status !== 'skipped') ??
     null;
 
   const reconciliationSource = await readReconciliation(current?.runId ?? publishedRunId);

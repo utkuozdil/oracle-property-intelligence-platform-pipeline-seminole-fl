@@ -14,11 +14,22 @@ const s3 = new S3Client({});
 
 /** Reads and parses a JSON object. Returns `null` when the key does not exist. */
 export async function getJson<T = unknown>(key: string): Promise<T | null> {
+  const record = await getJsonRecord<T>(key);
+  return record?.value ?? null;
+}
+
+/** Like {@link getJson}, plus the object's LastModified for completion timestamps. */
+export async function getJsonRecord<T = unknown>(
+  key: string,
+): Promise<{ value: T; lastModified: string | null } | null> {
   try {
     const response = await s3.send(new GetObjectCommand({ Bucket: DATA_BUCKET, Key: key }));
     const text = await response.Body?.transformToString();
     if (text === undefined || text.trim() === '') return null;
-    return JSON.parse(text) as T;
+    return {
+      value: JSON.parse(text) as T,
+      lastModified: response.LastModified?.toISOString() ?? null,
+    };
   } catch (error) {
     if (isMissing(error)) return null;
     throw error;

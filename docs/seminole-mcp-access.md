@@ -1,14 +1,13 @@
 # MCP access
 
-`apps/mcp/` is a local MCP server over the published Seminole query table. It reads
-`query-table/seminole.parquet` at the stable IPNS name — the same file `just duckdb-demo`
-uses. Each consumer runs their own copy. There is no hosted URL.
-
+`apps/mcp/` is a local stdio MCP server over the published Seminole query table
+(`query-table/seminole.parquet` at IPNS
+`k51qzi5uqu5di4rwv9bhnuzrg6xrxsugpjq8y85zhsgethars962cmosaqbh8i`).
 Needs Node 22.12+, pnpm, and the DuckDB CLI (`brew install duckdb`).
 
 ```bash
-just mcp-probe    # handshake + demo questions
-just mcp-serve    # stdio; point an MCP client at this process
+just mcp-serve    # point an MCP client at this process
+just mcp-probe    # handshake + tool calls
 ```
 
 ```json
@@ -22,30 +21,20 @@ just mcp-serve    # stdio; point an MCP client at this process
 }
 ```
 
-The Seminole IPNS name is the default:
-`k51qzi5uqu5di4rwv9bhnuzrg6xrxsugpjq8y85zhsgethars962cmosaqbh8i`.
-
 ## Tools
 
-Every response includes `source`, `assumptions`, and `missingData`. No arbitrary-SQL tool.
+Every response includes `source`, `assumptions`, and `missingData`.
 
 | Tool | What it does |
 | --- | --- |
-| `describe_dataset` | Row counts, coverage, manifest, which enrichment this copy can see |
+| `describe_dataset` | Row counts, coverage, manifest, enrichment this copy can see |
 | `get_property` | One parcel by id (hyphenated or stripped) |
 | `search_properties` | County-wide filters; `orderBy` includes `roof_age_desc` / `roof_age_asc` |
-| `search_properties_near` | Same filters, radius around a lat/lon, ordered by distance |
-| `find_roofing_leads` | Confirmed-open roofing near a pin, contractor + BBB when permits are configured |
+| `search_properties_near` | Same filters, radius around a lat/lon |
+| `find_roofing_leads` | Open roofing near a pin, with contractor and BBB when `ORACLE_DATA_BUCKET` is set |
 
-## Permits
-
-Permit status and BBB are **not** on the IPFS query table. They come from
-`s3://$ORACLE_DATA_BUCKET/publish/permits/current.json` → `permits.parquet`.
-
-- `just mcp-probe` sets the bucket when AWS credentials resolve.
-- Without a bucket, `find_roofing_leads` answers the radius / roof-age half and marks
-  permits as **unanswered** — not as zero.
-- Only `status = 'open'` is open. `unknown` is unharvested, not open and not closed.
+`find_roofing_leads` reads `s3://$ORACLE_DATA_BUCKET/publish/permits/current.json`.
+Only `status = 'open'` is open.
 
 ## Same data without the server
 
@@ -60,5 +49,4 @@ ORDER BY roof_age DESC NULLS LAST
 LIMIT 25;
 ```
 
-The URL must name the `.parquet` file, not the directory CID. Provenance is
-`<ipns>/query-table/manifest.json`.
+The URL must name the `.parquet` file. Provenance is `<ipns>/query-table/manifest.json`.

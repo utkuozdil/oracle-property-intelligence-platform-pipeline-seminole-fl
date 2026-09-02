@@ -6,10 +6,11 @@
  * Driving the current planner + harvest against the same S3 prefixes is the resume path
  * those modules already export.
  */
-import { harvestStatusBatch } from './harvest-status';
 import { WafBlockedError } from './http';
+import { putJson } from './objects';
 import { planStatusSweep } from './plan-status';
-import { statusBatchKey } from './storage';
+import { statusBatchKey, statusSummaryKey } from './storage';
+import { harvestStatusBatchWhenReady } from './wait-source-b';
 
 function say(line: string): void {
   process.stdout.write(`${new Date().toISOString()} ${line}\n`);
@@ -88,6 +89,7 @@ async function main(): Promise<void> {
 
   const started = Date.now();
   let harvested = 0;
+  let batchesLanded = 0;
   for (const [index, batch] of batches.entries()) {
     if (probeLevels.length > 0) {
       const level = probeLevels[Math.min(index, probeLevels.length - 1)];
@@ -95,8 +97,9 @@ async function main(): Promise<void> {
       say(`probe concurrency=${level} batch=${batch.batchIndex}`);
     }
     const batchStarted = Date.now();
-    const result = await harvestStatusBatch(batch);
+    const result = await harvestStatusBatchWhenReady(batch, { log: say });
     harvested += result.permitsHarvested;
+    batchesLanded += 1;
     const batchMin = (Date.now() - batchStarted) / 60_000;
     const elapsedMin = (Date.now() - started) / 60_000;
     const batchRate = result.permitsHarvested / Math.max(batchMin, 0.001);
@@ -113,7 +116,17 @@ async function main(): Promise<void> {
       break;
     }
   }
-  say(`done harvested=${harvested}`);
+  const finishedAt = new Date().toISOString();
+  if (probeLevels.length === 0) {
+    await putJson(statusSummaryKey(runId), {
+      runId,
+      finishedAt,
+      batchesLanded,
+      permitsLanded: harvested,
+      source: 'operator-sweep',
+    });
+  }
+  say(`done harvested=${harvested} finishedAt=${finishedAt}`);
 }
 
 main().catch((error: unknown) => {

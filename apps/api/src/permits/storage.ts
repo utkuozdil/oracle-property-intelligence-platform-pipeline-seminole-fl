@@ -125,6 +125,11 @@ export function statusSummaryKey(runId: string): string {
   return `${manifestPrefix(runId)}status-summary.json`;
 }
 
+/** In-flight Source B progress so the run summary can show a count before the sweep finishes. */
+export function statusProgressKey(runId: string): string {
+  return `${manifestPrefix(runId)}status-progress.json`;
+}
+
 export function coverageKey(runId: string): string {
   return `${manifestPrefix(runId)}coverage.json`;
 }

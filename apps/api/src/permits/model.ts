@@ -55,6 +55,12 @@ export const HarvestRequest = z
     /** Skip Source B entirely and land the census only. */
     censusOnly: z.boolean().optional(),
     /**
+     * Skip Source A and run PlanStatus → StatusSweep → ReconcileStatus only.
+     * The operator trigger for a status-only pass — same state machine as the weekly
+     * census+status harvest, different input. Mutually exclusive with `censusOnly`.
+     */
+    statusOnly: z.boolean().optional(),
+    /**
      * How far back Source B refreshes status. Status is only decision-relevant for recent
      * permits, and Source B costs one request per permit at ~2.3 s.
      */

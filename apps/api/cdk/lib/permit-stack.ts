@@ -37,9 +37,15 @@ export interface PermitStackProps extends cdk.StackProps {
  *
  * Shape of the workflow, and why:
  *
- *   PlanSweep -> PredictCost -> [AwaitApproval] -> WaitForPortal
- *     -> CensusSweep (Distributed Map, Source A)  -> ReconcileCensus
- *     -> PlanStatus -> StatusSweep (Distributed Map, Source B) -> ReconcileStatus
+ *   PlanSweep -> PredictCost -> [AwaitApproval]
+ *     -> (statusOnly) PlanStatus -> StatusSweep -> ReconcileStatus
+ *     -> (default)    WaitForPortal -> CensusSweep -> ReconcileCensus
+ *                     -> PlanStatus -> StatusSweep -> ReconcileStatus
+ *
+ * A status-only run is the same machine as the weekly harvest. Start it with
+ * `{ "statusOnly": true, ...status fields }` — the same `start-execution` path as
+ * BBB / licences / the nightly refresh. Do not start a second Source B client
+ * while a local sweep is already talking to Click2Gov from this IP.
  *
  * Source A is a hard prerequisite for Source B, not a parallel branch: Source B's only
  * cap-free lookup is by application number, and application numbers only exist in Source A's
@@ -380,6 +386,22 @@ export class PermitStack extends cdk.Stack {
     });
     statusBatchTask.addRetry(transientRetry);
 
+    /**
+     * Click2Gov's generic error page is a portal outage, not a bad permit. Lambda must
+     * not sleep for 20 minutes (10-minute timeout). The wait lives here so a status
+     * sweep sits, then retries the same batch, instead of failing the map.
+     */
+    const waitForClick2Gov = new sfn.Wait(this, 'WaitForClick2Gov', {
+      time: sfn.WaitTime.duration(cdk.Duration.minutes(20)),
+    });
+    statusBatchTask.addCatch(waitForClick2Gov, {
+      errors: ['PermitSourceUnavailableError', 'TransientRequestError'],
+      // Discard the error payload so the retry still receives the original batch item.
+      // StatusBatch is a strict schema and would reject a sibling `click2GovWait` field.
+      resultPath: sfn.JsonPath.DISCARD,
+    });
+    waitForClick2Gov.next(statusBatchTask);
+
     const statusSweep = new sfn.DistributedMap(this, 'StatusSweep', {
       itemsPath: '$.statusPlan.batches',
       // One child at a time. The worker is pinned to one instance anyway, so a higher value
@@ -413,6 +435,8 @@ export class PermitStack extends cdk.Stack {
       )
       .otherwise(new sfn.Pass(this, 'NoPermitsInStatusWindow'));
 
+    const statusPath = planStatusTask.next(statusPlannedChoice);
+
     /**
      * The census-only branch is taken *before* the planner rather than after it. Planning is
      * not free — it reads every census row back and writes a batch object per 150 permits — so
@@ -423,7 +447,7 @@ export class PermitStack extends cdk.Stack {
         sfn.Condition.booleanEquals('$.plan.scope.censusOnly', true),
         new sfn.Pass(this, 'CensusOnlyRun'),
       )
-      .otherwise(planStatusTask.next(statusPlannedChoice));
+      .otherwise(statusPath);
 
     const censusChain = censusSweep.next(reconcileCensusTask).next(censusOnlyChoice);
 
@@ -431,12 +455,21 @@ export class PermitStack extends cdk.Stack {
       .when(sfn.Condition.isNull('$.plan.waitUntil'), censusChain)
       .otherwise(waitForPortal.next(censusChain));
 
+    /**
+     * Status-only is the operator trigger that skips Source A. The weekly schedule
+     * still sends `{}` and takes the census path. `statusOnly` is always present on
+     * the plan so this Choice never sees a missing path.
+     */
+    const harvestKindChoice = new sfn.Choice(this, 'CensusRequested?')
+      .when(sfn.Condition.booleanEquals('$.plan.scope.statusOnly', true), statusPath)
+      .otherwise(portalWindowChoice);
+
     const overBudgetChoice = new sfn.Choice(this, 'OverBudget?')
       .when(
         sfn.Condition.stringEquals('$.cost.status', 'APPROVAL_REQUIRED'),
-        awaitApprovalTask.next(portalWindowChoice),
+        awaitApprovalTask.next(harvestKindChoice),
       )
-      .otherwise(portalWindowChoice);
+      .otherwise(harvestKindChoice);
 
     return planSweepTask.next(predictCostTask).next(overBudgetChoice);
   }

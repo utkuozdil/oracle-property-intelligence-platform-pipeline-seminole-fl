@@ -19,9 +19,40 @@ import { pageTitle, staticFormFields, tableRows } from './html';
 import { CookieJar, requestWithRetry } from './http';
 import type { InspectionRow, PermitStatusRecord, RoofingMatchRule } from './model';
 
-/** Click2Gov served an error page instead of a detail page. */
+/** Click2Gov served an unexpected page for one permit (not the portal-wide error page). */
 export class PermitDetailUnavailableError extends Error {
   override readonly name = 'PermitDetailUnavailableError';
+}
+
+/**
+ * Click2Gov is up at the HTTP layer but the application is serving its generic error page.
+ * That is a portal outage, not a missing permit — retrying immediately just burns the host.
+ */
+export class PermitSourceUnavailableError extends Error {
+  override readonly name = 'PermitSourceUnavailableError';
+}
+
+/** The title Click2Gov puts on its generic failure page, including `… - Error!`. */
+export function isClick2GovErrorPage(title: string): boolean {
+  return /error/i.test(title);
+}
+
+/**
+ * A Status Detail POST (or a search-form GET) that did not return a usable page.
+ *
+ * The portal-wide error title is a different class from "this one application number
+ * did not resolve" so the operator driver can sleep instead of exiting.
+ */
+export function assertStatusDetailTitle(title: string, appNo: string): void {
+  if (/status detail/i.test(title)) return;
+  if (title === '' || isClick2GovErrorPage(title)) {
+    throw new PermitSourceUnavailableError(
+      `Source B is serving its error page ("${title || '(empty title)'}") instead of a Status Detail page for ${appNo}`,
+    );
+  }
+  throw new PermitDetailUnavailableError(
+    `Source B returned "${title}" for ${appNo} rather than a Status Detail page`,
+  );
 }
 
 /**
@@ -97,12 +128,7 @@ export async function fetchStatusDetail(appNo: string): Promise<StatusDetailFetc
   );
   jar.absorb(response.headers);
 
-  const title = pageTitle(response.body) ?? '';
-  if (!/status detail/i.test(title)) {
-    throw new PermitDetailUnavailableError(
-      `Source B returned "${title}" for ${appNo} rather than a Status Detail page`,
-    );
-  }
+  assertStatusDetailTitle(pageTitle(response.body) ?? '', appNo);
 
   return {
     html: response.body,
@@ -110,6 +136,24 @@ export async function fetchStatusDetail(appNo: string): Promise<StatusDetailFetc
     csrfToken: csrfTokenOf(response.body),
     jar,
   };
+}
+
+/**
+ * One GET of the search form. Used before a concurrent batch so a down portal is
+ * detected with a single request instead of `SOURCE_B_CONCURRENCY` POSTs.
+ */
+export async function probeSourceB(): Promise<void> {
+  const response = await requestWithRetry(
+    SOURCE_B_URL,
+    { method: 'GET', headers: headers(null) },
+    { encoding: 'latin1', baseDelayMs: SOURCE_B_DELAY_MS },
+  );
+  const title = pageTitle(response.body) ?? '';
+  if (isClick2GovErrorPage(title) || title === '') {
+    throw new PermitSourceUnavailableError(
+      `Source B search form is serving "${title || '(empty title)'}" rather than a live page`,
+    );
+  }
 }
 
 /**

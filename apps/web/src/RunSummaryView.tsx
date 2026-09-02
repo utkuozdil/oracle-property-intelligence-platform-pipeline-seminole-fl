@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Pagination, pageSlice } from './Pagination';
 import { api } from './api';
 import { MISSING, formatBytes, formatCount, formatTimestamp } from './format';
+import { listedSources, sourceTableRows, type SourceStatus } from './run-summary-rows';
 
 type SummaryResponse = Awaited<ReturnType<typeof api.runs.summary.query>>;
 type SourceEntry = SummaryResponse['sources'][number];
@@ -12,11 +13,12 @@ type State =
   | { status: 'ready'; summary: SummaryResponse }
   | { status: 'error'; message: string };
 
-const STATUS_LABEL: Record<SourceEntry['status'], string> = {
+const STATUS_LABEL: Record<SourceStatus, string> = {
   ingested: 'Ingested',
   'in-progress': 'Ingesting now',
   'not-ingested': 'Not yet ingested',
   declined: 'Deliberately not ingested',
+  skipped: 'Skipped',
 };
 
 const CATEGORY_LABEL: Record<SourceEntry['category'], string> = {
@@ -124,7 +126,11 @@ export function RunSummaryView() {
         </p>
       </header>
 
-      <SourcesPanel sources={summary.sources} />
+      <SourcesPanel
+        sources={summary.sources}
+        runs={summary.runs}
+        publishedRunId={current?.runId ?? null}
+      />
 
       <IpfsPanel ipfs={summary.ipfs} />
 
@@ -159,16 +165,20 @@ function InlineField({
   );
 }
 
-function SourcesPanel({ sources }: { sources: SourceEntry[] }) {
+function SourcesPanel({
+  sources,
+  runs,
+  publishedRunId,
+}: {
+  sources: SourceEntry[];
+  runs: SummaryResponse['runs'];
+  publishedRunId: string | null;
+}) {
   const [page, setPage] = useState(1);
-  const listed = sources.filter(
-    (source) => source.status === 'ingested' || source.status === 'in-progress',
-  );
-  const ordered = [...listed].sort(
-    (a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category),
-  );
+  const listed = listedSources(sources);
   const ingested = listed.filter((source) => source.status === 'ingested').length;
-  const sliced = pageSlice(ordered, page, 20);
+  const rows = sourceTableRows(sources, runs, publishedRunId, CATEGORY_ORDER);
+  const sliced = pageSlice(rows, page, 20);
 
   return (
     <article className="panel panel--wide" data-testid="sources-panel">
@@ -189,39 +199,46 @@ function SourcesPanel({ sources }: { sources: SourceEntry[] }) {
             </tr>
           </thead>
           <tbody>
-            {sliced.rows.map((source) => (
-              <tr key={source.id} data-testid="source-row" data-source-id={source.id}>
-                <td data-testid="source-category">{CATEGORY_LABEL[source.category]}</td>
+            {sliced.rows.map((row) => (
+              <tr
+                key={row.key}
+                data-testid="source-row"
+                data-source-id={row.sourceId}
+                data-status={row.status}
+              >
+                <td data-testid="source-category">
+                  {CATEGORY_LABEL[row.category as SourceEntry['category']]}
+                </td>
                 <td>
-                  <span className="source-label">{source.label}</span>
+                  <span className="source-label">{row.label}</span>
                 </td>
                 <td>
                   <span
-                    className={`tag tag--${source.status === 'ingested' ? 'ok' : source.status === 'in-progress' ? 'live' : 'warn'}`}
+                    className={`tag tag--${row.status === 'ingested' ? 'ok' : row.status === 'in-progress' ? 'live' : 'warn'}`}
                     data-testid="source-status"
-                    data-status={source.status}
+                    data-status={row.status}
                   >
-                    {STATUS_LABEL[source.status]}
+                    {STATUS_LABEL[row.status]}
                   </span>
                 </td>
                 <td className="num" data-testid="source-records">
-                  {source.records === null ? MISSING : formatCount(source.records)}
-                  {source.records !== null && source.recordUnit !== null && (
-                    <span className="cell-sub">{source.recordUnit}</span>
+                  {row.records === null ? MISSING : formatCount(row.records)}
+                  {row.records !== null && row.recordUnit !== null && (
+                    <span className="cell-sub">{row.recordUnit}</span>
                   )}
                 </td>
-                <td data-testid="source-collected-at">{formatTimestamp(source.collectedAt)}</td>
+                <td data-testid="source-collected-at">{formatTimestamp(row.collectedAt)}</td>
                 <td>
                   <a
                     className="source-provenance"
-                    href={source.provenance}
+                    href={row.provenance}
                     target="_blank"
                     rel="noreferrer"
                     data-testid="source-provenance"
                   >
-                    {SOURCE_LINK[source.id] ?? 'Open source'}
+                    {SOURCE_LINK[row.sourceId] ?? 'Open source'}
                   </a>
-                  <span className="cell-sub">{source.cadence}</span>
+                  <span className="cell-sub">{row.cadence}</span>
                 </td>
               </tr>
             ))}

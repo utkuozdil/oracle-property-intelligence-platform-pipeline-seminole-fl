@@ -27,9 +27,9 @@ import {
   type QuarantinedStatus,
   type StatusBatchResult,
 } from './model';
-import { getJson, putJson, putNdjson, putText } from './objects';
+import { getJson, getTextIfPresent, putJson, putNdjson, putText } from './objects';
 import { buildStatusRecord, fetchInspections, fetchStatusDetail } from './source-b';
-import { quarantineKey, statusRawKey, statusRecordsKey } from './storage';
+import { quarantineKey, statusProgressKey, statusRawKey, statusRecordsKey } from './storage';
 import { recordVolume } from './work-metrics';
 
 interface HarvestedPermit {
@@ -87,6 +87,37 @@ async function harvestOne(
  * the Distributed Map. Both callers get the same in-process rate limiter, which is where this
  * tier's politeness actually lives — see the note on {@link SOURCE_B_CONCURRENCY}.
  */
+async function recordStatusProgress(
+  batch: StatusBatch,
+  harvestedThisBatch: number,
+  now: Date,
+): Promise<void> {
+  const key = statusProgressKey(batch.runId);
+  const previous = await getTextIfPresent(key);
+  let priorLanded = 0;
+  let priorBatches = 0;
+  if (previous.body !== null && previous.body !== '') {
+    try {
+      const parsed = JSON.parse(previous.body) as {
+        permitsLanded?: number;
+        batchesLanded?: number;
+      };
+      priorLanded = Number(parsed.permitsLanded) || 0;
+      priorBatches = Number(parsed.batchesLanded) || 0;
+    } catch {
+      priorLanded = 0;
+      priorBatches = 0;
+    }
+  }
+  await putJson(key, {
+    runId: batch.runId,
+    updatedAt: now.toISOString(),
+    lastBatchIndex: batch.batchIndex,
+    permitsLanded: priorLanded + harvestedThisBatch,
+    batchesLanded: priorBatches + 1,
+  });
+}
+
 /** Default is {@link SOURCE_B_CONCURRENCY} (3). Local probes may raise it via env. */
 function sourceBConcurrency(): number {
   const raw = process.env.SOURCE_B_CONCURRENCY;
@@ -151,6 +182,7 @@ export async function harvestStatusBatch(batch: StatusBatch): Promise<StatusBatc
       runId: batch.runId,
     }));
   await recordPermitStatuses(ledger);
+  await recordStatusProgress(batch, records.length, now);
 
   const result: StatusBatchResult = {
     runId: batch.runId,

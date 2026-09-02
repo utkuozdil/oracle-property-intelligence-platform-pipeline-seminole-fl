@@ -11,11 +11,15 @@ import { describe, expect, it } from 'vitest';
 import { isTerminalStatus, mapStatus } from './config';
 import { staticFormFields } from './html';
 import {
+  assertStatusDetailTitle,
   buildStatusRecord,
   csrfTokenOf,
   daysBetween,
+  isClick2GovErrorPage,
   normalizeDate,
   parseInspections,
+  PermitDetailUnavailableError,
+  PermitSourceUnavailableError,
   splitApplicationNumber,
   terminalInspectionDate,
 } from './source-b';
@@ -29,6 +33,32 @@ const inspectionsClosed = fixture('source-b-inspections-closed.html');
 const inspectionsNone = fixture('source-b-inspections-none.html');
 
 const NOW = new Date('2026-09-01T12:00:00Z');
+
+describe('Click2Gov error-page classification', () => {
+  it('treats the portal-wide error title as a source outage, not a missing permit', () => {
+    expect(isClick2GovErrorPage('Citizen Engagement Portal - Error!')).toBe(true);
+    expect(() =>
+      assertStatusDetailTitle('Citizen Engagement Portal - Error!', '18-7096'),
+    ).toThrow(PermitSourceUnavailableError);
+  });
+
+  it('treats an empty title as a source outage', () => {
+    expect(() => assertStatusDetailTitle('', '18-7096')).toThrow(PermitSourceUnavailableError);
+  });
+
+  it('keeps a non-error unexpected title as a per-permit miss', () => {
+    expect(isClick2GovErrorPage('Click2Gov Building Permit - Select Permit')).toBe(false);
+    expect(() =>
+      assertStatusDetailTitle('Click2Gov Building Permit - Select Permit', '18-7096'),
+    ).toThrow(PermitDetailUnavailableError);
+  });
+
+  it('accepts a Status Detail title', () => {
+    expect(() =>
+      assertStatusDetailTitle('Click2Gov Building Permit - Status Detail', '26-12426'),
+    ).not.toThrow();
+  });
+});
 
 describe('the application-number join', () => {
   it('splits Source A AppNo into the two fields Source B takes', () => {

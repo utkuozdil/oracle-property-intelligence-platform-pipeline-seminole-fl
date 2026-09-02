@@ -78,7 +78,7 @@ export class PipelineStack extends cdk.Stack {
         TABLE_NAME: props.table.tableName,
       },
     });
-    props.dataBucket.grantRead(recordRun);
+    props.dataBucket.grantReadWrite(recordRun);
     props.table.grantReadWriteData(recordRun);
 
     const predictCost = new ObservableFunction(this, 'PredictCost', {
@@ -476,6 +476,9 @@ export class PipelineStack extends cdk.Stack {
         runId: sfn.JsonPath.stringAt('$$.Execution.Name'),
         skipped: true,
         skipReason: sfn.JsonPath.stringAt('$.fetch.skipReason'),
+        sourceEtag: sfn.JsonPath.stringAt('$.fetch.sourceEtag'),
+        sourceLastModified: sfn.JsonPath.stringAt('$.fetch.sourceLastModified'),
+        startedAt: sfn.JsonPath.stringAt('$$.Execution.StartTime'),
       }),
       resultPath: '$.run',
       payloadResponseOnly: true,

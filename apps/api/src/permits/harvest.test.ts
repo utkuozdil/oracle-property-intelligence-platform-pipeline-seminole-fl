@@ -319,6 +319,13 @@ describe('input validation', () => {
     expect(HarvestRequest.parse({})).toEqual({});
   });
 
+  it('accepts a status-only trigger, which skips Source A on the same machine', () => {
+    expect(HarvestRequest.parse({ statusOnly: true, statusPermitLimit: 80000 })).toEqual({
+      statusOnly: true,
+      statusPermitLimit: 80000,
+    });
+  });
+
   it('rejects an unknown field rather than silently ignoring it', () => {
     expect(() => HarvestRequest.parse({ fromMonht: '2026-01' })).toThrow();
   });
@@ -504,6 +511,20 @@ describe('the permit stack', () => {
     );
   });
 
+  it('skips the Source A census on a status-only run', () => {
+    const body = definition();
+    expect(body).toContain('CensusRequested?');
+    expect(body).toContain('statusOnly');
+    expect(body.indexOf('\\"CensusRequested?\\":')).toBeLessThan(body.indexOf('CensusSweep'));
+  });
+
+  it('waits 20 minutes on a Click2Gov outage instead of failing the status map', () => {
+    const body = definition();
+    expect(body).toContain('WaitForClick2Gov');
+    expect(body).toContain('PermitSourceUnavailableError');
+    expect(body).toContain('\\"Seconds\\":1200');
+  });
+
   it('predicts cost before either portal is touched', () => {
     const body = definition();
     expect(body).toMatch(/\\"StartAt\\":\\"PlanSweepTask\\"/);
@@ -526,10 +547,16 @@ describe('the permit stack', () => {
     expect(body).toContain('PortalAvailable?');
   });
 
-  it('runs Source A before Source B, because Source B cannot be enumerated alone', () => {
+  it('runs Source A before Source B on the default path, because Source B cannot be enumerated alone', () => {
     const body = definition();
     expect(body.indexOf('CensusSweep')).toBeLessThan(body.indexOf('StatusSweep'));
-    expect(body.indexOf('ReconcileCensusTask')).toBeLessThan(body.indexOf('PlanStatusTask'));
+    // Status-only is an explicit skip of Source A, not a reorder of the weekly harvest.
+    const kind = body.slice(
+      body.indexOf('\\"CensusRequested?\\":'),
+      body.indexOf('\\"PortalAvailable?\\"'),
+    );
+    expect(kind).toContain('statusOnly');
+    expect(kind).toContain('PlanStatusTask');
   });
 
   it('caps both maps and spills their results to S3', () => {
