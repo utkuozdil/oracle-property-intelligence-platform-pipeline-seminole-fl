@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AgentView } from './AgentView';
 import { OwnerDetailView } from './OwnerViews';
 import { ParcelDetailView } from './ParcelDetailView';
+import { PlaceDetailView } from './PlaceDetailView';
+import { PlacesSearchView, type PlacesSearchState } from './PlacesSearchView';
 import { RadiusSearchView, type RadiusState } from './RadiusSearchView';
 import { RunSummaryView } from './RunSummaryView';
 import { SearchView, type SearchState } from './SearchView';
@@ -11,19 +13,23 @@ import {
   EMPTY_RADIUS,
   parseLocation,
   toNearbyInput,
+  toPlacesInput,
   toSearchInput,
   toSearchString,
   type AppState,
+  type PlacesQuery,
   type RadiusQuery,
   type SearchQuery,
   type ViewName,
 } from './query';
 
 type MetaResponse = Awaited<ReturnType<typeof api.parcels.meta.query>>;
+type PlacesMetaResponse = Awaited<ReturnType<typeof api.places.meta.query>>;
 
 const NAV_ITEMS: { view: ViewName; label: string }[] = [
   { view: 'runs', label: 'Run summary' },
   { view: 'search', label: 'Parcel search' },
+  { view: 'places', label: 'Businesses' },
   { view: 'radius', label: 'Radius search' },
   { view: 'agent', label: 'Ask the agent' },
 ];
@@ -52,8 +58,10 @@ export function App() {
   const [state, setState] = useState<AppState>(() => parseLocation(window.location.search));
   const [meta, setMeta] = useState<MetaResponse | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [placesMeta, setPlacesMeta] = useState<PlacesMetaResponse | null>(null);
   const [search, setSearch] = useState<SearchState>({ status: 'loading' });
   const [radius, setRadius] = useState<RadiusState>({ status: 'idle' });
+  const [placesSearch, setPlacesSearch] = useState<PlacesSearchState>({ status: 'loading' });
 
   useEffect(() => {
     const onPopState = (): void => setState(parseLocation(window.location.search));
@@ -68,28 +76,37 @@ export function App() {
 
   const onApply = useCallback(
     (query: SearchQuery) =>
-      navigate({ ...state, view: 'search', query, parcelId: null, owner: null }),
+      navigate({ ...state, view: 'search', query, parcelId: null, owner: null, placeId: null }),
     [navigate, state],
   );
   const onApplyRadius = useCallback(
     (next: RadiusQuery) =>
-      navigate({ ...state, view: 'radius', radius: next, parcelId: null, owner: null }),
+      navigate({ ...state, view: 'radius', radius: next, parcelId: null, owner: null, placeId: null }),
+    [navigate, state],
+  );
+  const onApplyPlaces = useCallback(
+    (places: PlacesQuery) =>
+      navigate({ ...state, view: 'places', places, parcelId: null, owner: null, placeId: null }),
     [navigate, state],
   );
   const onOpenParcel = useCallback(
-    (parcelId: string) => navigate({ ...state, parcelId, owner: null }),
+    (parcelId: string) => navigate({ ...state, parcelId, owner: null, placeId: null }),
     [navigate, state],
   );
   const onOpenOwner = useCallback(
-    (owner: string) => navigate({ ...state, owner, parcelId: null }),
+    (owner: string) => navigate({ ...state, owner, parcelId: null, placeId: null }),
+    [navigate, state],
+  );
+  const onOpenPlace = useCallback(
+    (placeId: string) => navigate({ ...state, view: 'places', placeId, parcelId: null, owner: null }),
     [navigate, state],
   );
   const onOpenView = useCallback(
-    (view: ViewName) => navigate({ ...state, view, parcelId: null, owner: null }),
+    (view: ViewName) => navigate({ ...state, view, parcelId: null, owner: null, placeId: null }),
     [navigate, state],
   );
   const onBack = useCallback(
-    () => navigate({ ...state, parcelId: null, owner: null }),
+    () => navigate({ ...state, parcelId: null, owner: null, placeId: null }),
     [navigate, state],
   );
 
@@ -102,6 +119,26 @@ export function App() {
         radius: { ...EMPTY_RADIUS, near, radiusMiles, roofAgeMin },
         parcelId: null,
         owner: null,
+        placeId: null,
+      }),
+    [navigate, state],
+  );
+
+  const onOpenRadiusAtCoords = useCallback(
+    (lat: number, lon: number) =>
+      navigate({
+        ...state,
+        view: 'radius',
+        radius: {
+          ...EMPTY_RADIUS,
+          near: '',
+          lat: String(lat),
+          lon: String(lon),
+          radiusMiles: '1',
+        },
+        parcelId: null,
+        owner: null,
+        placeId: null,
       }),
     [navigate, state],
   );
@@ -115,6 +152,21 @@ export function App() {
       })
       .catch((error: unknown) => {
         if (!cancelled) setMetaError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.places.meta
+      .query()
+      .then((response) => {
+        if (!cancelled) setPlacesMeta(response);
+      })
+      .catch(() => {
+        // Places are a second snapshot. A miss must not blank parcel search.
       });
     return () => {
       cancelled = true;
@@ -174,6 +226,30 @@ export function App() {
       });
   }, [radiusActive, radiusQuery]);
 
+  const placesSeq = useRef(0);
+  const placesQuery = state.places;
+  const placesActive = state.view === 'places' && state.placeId === null;
+
+  useEffect(() => {
+    if (!placesActive) return;
+    const seq = placesSeq.current + 1;
+    placesSeq.current = seq;
+    setPlacesSearch({ status: 'loading' });
+
+    api.places.search
+      .query(toPlacesInput(placesQuery))
+      .then((result) => {
+        if (placesSeq.current === seq) setPlacesSearch({ status: 'ready', result });
+      })
+      .catch((error: unknown) => {
+        if (placesSeq.current !== seq) return;
+        setPlacesSearch({
+          status: 'error',
+          message: formatQueryError(error),
+        });
+      });
+  }, [placesActive, placesQuery]);
+
   return (
     <div className="shell">
       <header className="masthead">
@@ -189,6 +265,12 @@ export function App() {
             <dt>Parcels</dt>
             <dd data-testid="snapshot-parcel-count">
               {meta ? formatCount(meta.parcelCount) : '…'}
+            </dd>
+          </div>
+          <div>
+            <dt>Places</dt>
+            <dd data-testid="snapshot-place-count">
+              {placesMeta ? formatCount(placesMeta.placeCount) : '…'}
             </dd>
           </div>
           <div>
@@ -236,6 +318,14 @@ export function App() {
             onOpenParcel={onOpenParcel}
             onOpenRadius={(near) => onOpenRadiusAt(near, '1', '')}
           />
+        ) : state.placeId !== null ? (
+          <PlaceDetailView
+            gersId={state.placeId}
+            onBack={onBack}
+            onOpenParcel={onOpenParcel}
+            onOpenOwner={onOpenOwner}
+            onOpenRadius={onOpenRadiusAtCoords}
+          />
         ) : state.view === 'runs' ? (
           <RunSummaryView />
         ) : state.view === 'radius' ? (
@@ -253,6 +343,14 @@ export function App() {
             currentRadiusMiles={state.radius.radiusMiles}
             currentRoofAgeMin={state.radius.roofAgeMin}
             onOpenParcel={onOpenParcel}
+          />
+        ) : state.view === 'places' ? (
+          <PlacesSearchView
+            applied={state.places}
+            meta={placesMeta}
+            search={placesSearch}
+            onApply={onApplyPlaces}
+            onOpenPlace={onOpenPlace}
           />
         ) : (
           <SearchView

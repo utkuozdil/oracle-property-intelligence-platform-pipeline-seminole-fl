@@ -114,18 +114,53 @@ export const EMPTY_RADIUS: RadiusQuery = {
   pageSize: 25,
 };
 
-/** Top-level views. `parcel` and `owner` open on top of whichever view is active. */
-export const VIEWS = ['search', 'radius', 'agent', 'runs', 'owners'] as const;
+/** Top-level views. `parcel`, `owner`, and `place` open on top of whichever view is active. */
+export const VIEWS = ['search', 'radius', 'agent', 'runs', 'owners', 'places'] as const;
 export type ViewName = (typeof VIEWS)[number];
+
+export const PLACE_SORT_OPTIONS = [
+  { value: 'name_asc', label: 'Name — A to Z' },
+  { value: 'confidence_desc', label: 'Confidence — highest first' },
+  { value: 'category_asc', label: 'Category — A to Z' },
+] as const;
+
+export type PlaceSortKey = (typeof PLACE_SORT_OPTIONS)[number]['value'];
+
+const PLACE_SORT_VALUES = PLACE_SORT_OPTIONS.map((option) => option.value) as readonly string[];
+
+export interface PlacesQuery {
+  q: string;
+  jurisdiction: string;
+  category: string;
+  status: string;
+  roofingOnly: '' | 'true';
+  sort: PlaceSortKey;
+  page: number;
+  pageSize: number;
+}
+
+export const EMPTY_PLACES: PlacesQuery = {
+  q: '',
+  jurisdiction: '',
+  category: '',
+  status: '',
+  roofingOnly: '',
+  sort: 'name_asc',
+  page: 1,
+  pageSize: 25,
+};
 
 export interface AppState {
   view: ViewName;
   query: SearchQuery;
   radius: RadiusQuery;
+  places: PlacesQuery;
   /** Non-null when the parcel detail view is open. */
   parcelId: string | null;
   /** Non-null when an owner entity view is open. */
   owner: string | null;
+  /** Non-null when a business-place detail view is open. */
+  placeId: string | null;
 }
 
 function readSort(value: string | null): SortKey {
@@ -149,6 +184,12 @@ function readNearbySort(value: string | null): NearbySortKey {
     : 'distance_asc';
 }
 
+function readPlaceSort(value: string | null): PlaceSortKey {
+  return value !== null && PLACE_SORT_VALUES.includes(value)
+    ? (value as PlaceSortKey)
+    : 'name_asc';
+}
+
 export function parseLocation(search: string): AppState {
   const params = new URLSearchParams(search);
   const text = (key: string): string => params.get(key) ?? '';
@@ -159,6 +200,17 @@ export function parseLocation(search: string): AppState {
     view: readView(params.get('view')),
     parcelId: params.get('parcel'),
     owner: params.get('owner'),
+    placeId: params.get('place'),
+    places: {
+      q: text('placesQ'),
+      jurisdiction: text('placesJurisdiction'),
+      category: text('placesCategory'),
+      status: text('placesStatus'),
+      roofingOnly: params.get('placesRoofing') === 'true' ? 'true' : '',
+      sort: readPlaceSort(params.get('placesSort')),
+      page: readInt(params.get('placesPage'), 1),
+      pageSize: readInt(params.get('placesPageSize'), 25),
+    },
     radius: {
       near: text('near'),
       lat: text('lat'),
@@ -192,9 +244,24 @@ export function parseLocation(search: string): AppState {
 
 export function toSearchString(state: AppState): string {
   const params = new URLSearchParams();
-  const { query, radius } = state;
+  const { query, radius, places } = state;
 
   if (state.view !== 'search') params.set('view', state.view);
+
+  if (state.view === 'places') {
+    for (const [key, value] of [
+      ['placesQ', places.q],
+      ['placesJurisdiction', places.jurisdiction],
+      ['placesCategory', places.category],
+      ['placesStatus', places.status],
+      ['placesRoofing', places.roofingOnly],
+    ] as const) {
+      if (value !== '') params.set(key, value);
+    }
+    if (places.sort !== 'name_asc') params.set('placesSort', places.sort);
+    if (places.page !== 1) params.set('placesPage', String(places.page));
+    if (places.pageSize !== 25) params.set('placesPageSize', String(places.pageSize));
+  }
 
   if (state.view === 'radius') {
     for (const [key, value] of [
@@ -235,6 +302,7 @@ export function toSearchString(state: AppState): string {
   if (query.page !== 1) params.set('page', String(query.page));
   if (query.pageSize !== 25) params.set('pageSize', String(query.pageSize));
   if (state.parcelId !== null) params.set('parcel', state.parcelId);
+  if (state.placeId !== null) params.set('place', state.placeId);
 
   const encoded = params.toString();
   return encoded === '' ? '/' : `/?${encoded}`;
@@ -356,6 +424,41 @@ export function radiusFromAgent(
     openRoofing: query.openRoofingOnly ? 'true' : '',
     minOpenRoofingYears: query.minOpenRoofingYears === null ? '' : String(query.minOpenRoofingYears),
     sort: query.sort,
+  };
+}
+
+export interface PlacesInput {
+  q?: string;
+  jurisdiction?: string;
+  category?: string;
+  status?: string;
+  roofingOnly?: boolean;
+  sort: PlaceSortKey;
+  page: number;
+  pageSize: number;
+}
+
+export function describePlaceFilters(query: PlacesQuery): ActiveFilter[] {
+  const chips: ActiveFilter[] = [];
+  if (query.q !== '') chips.push({ key: 'q', label: `Text: "${query.q}"` });
+  if (query.jurisdiction !== '')
+    chips.push({ key: 'jurisdiction', label: `Jurisdiction: ${query.jurisdiction}` });
+  if (query.category !== '') chips.push({ key: 'category', label: `Category: ${query.category}` });
+  if (query.status !== '') chips.push({ key: 'status', label: `Status: ${query.status}` });
+  if (query.roofingOnly === 'true') chips.push({ key: 'roofingOnly', label: 'Roofing businesses' });
+  return chips;
+}
+
+export function toPlacesInput(query: PlacesQuery): PlacesInput {
+  return {
+    q: query.q.trim() === '' ? undefined : query.q.trim(),
+    jurisdiction: query.jurisdiction === '' ? undefined : query.jurisdiction,
+    category: query.category === '' ? undefined : query.category,
+    status: query.status === '' ? undefined : query.status,
+    roofingOnly: query.roofingOnly === 'true' ? true : undefined,
+    sort: query.sort,
+    page: query.page,
+    pageSize: query.pageSize,
   };
 }
 
